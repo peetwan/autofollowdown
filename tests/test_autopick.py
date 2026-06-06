@@ -6,6 +6,7 @@ verify the routing/profiling logic and that the native fallback always runs.
 
 import copy
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -100,3 +101,24 @@ def test_auto_compress_picks_native_when_externals_absent():
     # On a machine without NNI/llmcompressor/modelopt, the runnable pick is native.
     _, chosen = auto_compress(copy.deepcopy(_mlp()))
     assert "native" in chosen.backend
+
+
+def test_get_backend_by_alias():
+    from autofollowdown import get_backend
+    assert get_backend("nni").alias == "nni"
+    assert get_backend("modelopt").alias == "modelopt"
+    assert get_backend("llmcompressor").alias == "llmcompressor"
+    assert get_backend("nvidia").alias == "modelopt"      # substring match
+    assert get_backend("native").alias == "native"
+
+
+def test_compress_with_native_runs():
+    from autofollowdown import compress_with
+    model = compress_with(copy.deepcopy(_mlp()), "native")
+    assert model(torch.randn(2, 64)).shape == (2, 10)
+
+
+def test_compress_with_uninstalled_backend_errors_clearly():
+    from autofollowdown import compress_with
+    with pytest.raises(RuntimeError, match="not installed"):
+        compress_with(copy.deepcopy(_mlp()), "nni")

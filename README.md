@@ -272,7 +272,23 @@ Backends and what they're chosen for:
 The ranking always shows the *ideal* backend even if it isn't installed, plus the
 best one you can run right now. `recommend()` is advisory; `auto_compress()` executes.
 
-Try it: `python3 examples/autopick_demo.py`
+#### Use a specific connected backend in one line
+
+`compress_with(model, backend)` runs the real library (by name or alias) — it executes
+the moment the library is installed and the hardware suits it, and otherwise tells you
+exactly how to enable it. The same call works on a CNN (NNI) or an LLM like Qwen:
+
+```python
+from autofollowdown import compress_with
+
+compress_with(cnn,  "nni", dummy_input=x)                       # NNI structured pruning + ModelSpeedup
+compress_with(qwen, "llmcompressor",                            # GPTQ/AWQ 4-bit (vLLM-ready)
+              recipe=GPTQModifier(targets="Linear", scheme="W4A16"), dataset="open_platypus")
+compress_with(qwen, "modelopt", calibration_data=calib)         # NVIDIA SmoothQuant/NVFP4 PTQ (GPU)
+```
+
+Try it: `python3 examples/autopick_demo.py` — and the demo notebook calls `compress_with`
+on both a CNN and Qwen so you can see each backend's exact invocation.
 
 ## Layout
 

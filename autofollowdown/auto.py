@@ -74,6 +74,28 @@ def explain(model):
     return "\n".join(lines)
 
 
+def compress_with(model, backend, **kwargs):
+    """Compress `model` with a specific connected backend, by name or alias.
+
+        compress_with(qwen, "llmcompressor", dataset=ds)    # GPTQ/AWQ on an LLM
+        compress_with(cnn, "nni", dummy_input=x)            # NNI structured pruning
+        compress_with(qwen, "modelopt", calibration_data=c) # NVIDIA PTQ (GPU)
+
+    Runs the real library when it's installed and the hardware suits it; otherwise
+    raises a clear, actionable error. This is the same call `auto_compress` makes,
+    so the integration is genuinely one line — not a wrapper around a wrapper.
+    """
+    from .backends import get_backend
+
+    b = get_backend(backend)
+    profile = profile_model(model)
+    if not b.is_available():
+        raise RuntimeError(f"{b.name} is not installed — {b.install_hint}")
+    if not b.device_ok(profile):
+        raise RuntimeError(f"{b.name} requires a CUDA GPU (none detected).")
+    return b.compress(model, profile, **kwargs)
+
+
 def auto_compress(model, **kwargs):
     """Profile the model, pick the best *runnable* backend, compress, and return
     (compressed_model, chosen_recommendation).

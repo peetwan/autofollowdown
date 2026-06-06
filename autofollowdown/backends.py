@@ -21,6 +21,7 @@ class Backend:
     """Base backend. Subclasses set metadata and implement plan()/compress()."""
 
     name = "backend"
+    alias = "backend"       # short, typeable handle (e.g. "nni", "modelopt")
     library = None          # pip importable module name, or None for built-in
     install_hint = ""
     needs_cuda = False
@@ -47,6 +48,7 @@ class Backend:
 
 class NativeBackend(Backend):
     name = "autofollowdown (native)"
+    alias = "native"
     library = None
     install_hint = "(built in)"
 
@@ -77,6 +79,7 @@ class NativeBackend(Backend):
 
 class NNIBackend(Backend):
     name = "Microsoft NNI"
+    alias = "nni"
     library = "nni"
     install_hint = "pip install nni"
 
@@ -92,29 +95,42 @@ class NNIBackend(Backend):
                 "Channel/filter pruning that ModelSpeedup turns into a genuinely "
                 "smaller, faster model (real FLOP reduction).")
 
-    def compress(self, model, profile, config_list=None, dummy_input=None, **kwargs):
+    def compress(self, model, profile, sparsity=0.5, dummy_input=None, **kwargs):
         if not self.is_available():
             raise RuntimeError("NNI is not installed. " + self.install_hint)
-        # Real delegation to NNI's filter pruning + speedup (API per NNI docs).
-        try:
+        # Real delegation to NNI filter pruning + ModelSpeedup. NNI reorganized its
+        # compression API between v2 and v3, so try the modern path first, then v2.
+        try:  # NNI >= 3.x
+            from nni.compression.pruning import L1NormPruner
+            from nni.compression.speedup import ModelSpeedup
+            config_list = [{"op_types": ["Conv2d"], "sparse_ratio": sparsity}]
+            pruner = L1NormPruner(model, config_list)
+            _, masks = pruner.compress()
+            pruner.unwrap_model()
+            if dummy_input is not None:
+                ModelSpeedup(model, dummy_input, masks).speedup_model()
+            return model
+        except ImportError:
+            pass
+        try:  # NNI 2.x
             from nni.algorithms.compression.pytorch.pruning import L1FilterPruner
             from nni.compression.pytorch import ModelSpeedup
-        except ImportError as e:  # NNI's module paths shifted across versions
+            pruner = L1FilterPruner(model, [{"sparsity": sparsity, "op_types": ["Conv2d"]}])
+            pruner.compress()
+            pruner._unwrap_model()
+            if dummy_input is not None:
+                ModelSpeedup(model, dummy_input, masks_file=pruner.mask_dict).speedup_model()
+            return model
+        except ImportError as e:
             raise RuntimeError(
                 "Installed NNI exposes a different compression API than expected; "
                 "see https://nni.readthedocs.io for your version."
             ) from e
-        config_list = config_list or [{"sparsity": 0.5, "op_types": ["Conv2d"]}]
-        pruner = L1FilterPruner(model, config_list)
-        pruner.compress()
-        pruner._unwrap_model()
-        if dummy_input is not None:
-            ModelSpeedup(model, dummy_input, masks_file=pruner.mask_dict).speedup_model()
-        return model
 
 
 class LLMCompressorBackend(Backend):
     name = "llm-compressor (vLLM)"
+    alias = "llmcompressor"
     library = "llmcompressor"
     install_hint = "pip install llmcompressor"
 
@@ -146,6 +162,7 @@ class LLMCompressorBackend(Backend):
 
 class ModelOptBackend(Backend):
     name = "NVIDIA TensorRT Model Optimizer"
+    alias = "modelopt"
     library = "modelopt"
     install_hint = "pip install nvidia-modelopt"
     needs_cuda = True
@@ -193,7 +210,13 @@ def all_backends():
 
 
 def get_backend(name):
+    """Look up a backend by exact name, short alias, or case-insensitive substring."""
+    q = name.lower()
     for b in _REGISTRY:
-        if b.name == name:
+        if name == b.name or q == b.alias or q == b.name.lower():
             return b
-    raise KeyError(f"No backend named {name!r}")
+    for b in _REGISTRY:  # fall back to substring match (e.g. "nvidia", "vllm")
+        if q in b.name.lower() or q in b.alias:
+            return b
+    raise KeyError(f"No backend matching {name!r}. "
+                   f"Options: {[b.alias for b in _REGISTRY]}")

@@ -1,5 +1,5 @@
 from .api import ModelCompressor
-from .auto import Recommendation, auto_compress, explain, recommend
+from .auto import Recommendation, auto_compress, compress_with, explain, recommend
 from .backends import all_backends, get_backend
 from .benchmark import Benchmark
 from .ingestion import load_model
@@ -38,6 +38,7 @@ __all__ = [
     "compress_and_benchmark",
     "CompressionStudy",
     "auto_compress",
+    "compress_with",
     "recommend",
     "explain",
     "profile_model",
