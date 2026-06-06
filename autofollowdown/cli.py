@@ -1,11 +1,16 @@
 """`autofollowdown` command-line interface.
 
-After `pip install`, a friend can run everything without touching the source:
+After `pip install autofollowdown`, run everything without touching the source:
 
-    autofollowdown info               # version, backends, benchmark catalog
-    autofollowdown benchmark-vision   # real CNN compression benchmark (offline)
-    autofollowdown benchmark-llm      # real LLM perplexity benchmark
-    autofollowdown autopick           # show the best-library recommendations
+    autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ the easy one
+    autofollowdown compress                                 # offline demo (no model needed)
+    autofollowdown info                                     # version, backends, catalog
+    autofollowdown benchmark-vision                         # offline CNN benchmark
+    autofollowdown benchmark-llm                            # LLM perplexity benchmark
+    autofollowdown autopick                                 # best-library recommendations
+
+`compress` is the headline command: give it a model, it compresses every way,
+benchmarks them, recommends the best, and (with -o) saves the one you pick.
 """
 
 import argparse
@@ -79,9 +84,23 @@ def build_parser():
     p.add_argument("--version", action="version", version=f"autofollowdown {__version__}")
     sub = p.add_subparsers(dest="command")
 
+    # The easy, headline command: `autofollowdown compress <model>`
+    co = sub.add_parser(
+        "compress",
+        help="EASIEST: compress a model, benchmark every method, and pick the best")
+    co.add_argument("model", nargs="?", default=None,
+                    help="Hugging Face model id or .pt path (omit for the offline demo)")
+    co.add_argument("-o", "--output", default=None, help="save the chosen model here")
+    co.add_argument("-m", "--method", default=None,
+                    help="variant to keep (default = recommended)")
+    co.add_argument("--format", default="pt", choices=["pt", "onnx"])
+    co.add_argument("--epochs", type=int, default=8, help="epochs for the offline demo")
+    co.add_argument("--yes", action="store_true", help="take the recommendation, no prompt")
+    co.set_defaults(func=_cmd_auto)
+
     a = sub.add_parser(
         "auto",
-        help="ONE command: compress every way, benchmark, and pick a method to keep")
+        help="alias of `compress` (uses --model instead of a positional argument)")
     a.add_argument("--model", default=None,
                    help="Hugging Face model id; omit for the offline digits demo")
     a.add_argument("--method", default=None,

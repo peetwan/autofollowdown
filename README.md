@@ -62,17 +62,19 @@ ModelCompressor(my_model) \
 ## Install
 
 ```bash
-# from a clone
-git clone https://github.com/peetwan/autofollowdown
-cd autofollowdown
-pip install -e ".[examples]"     # core + scikit-learn/datasets for the demos
+pip install autofollowdown                 # core
+pip install "autofollowdown[examples]"     # + scikit-learn/datasets for the demos
+```
 
-# or straight from GitHub
+Until the first PyPI release is published, install straight from GitHub (same
+package, identical commands afterwards):
+
+```bash
 pip install "git+https://github.com/peetwan/autofollowdown#egg=autofollowdown[examples]"
 ```
 
 Requires Python `>=3.9`, PyTorch `>=2.1`. All core deps (torch, onnx, onnxruntime,
-transformers, numpy) install automatically.
+onnxscript, transformers, numpy) install automatically. See [Publishing](#publishing-to-pypi).
 
 ### 📓 Demo notebook
 
@@ -83,12 +85,17 @@ one-command flow, auto-picker, benchmarks, and which datasets are used).
 ### Try it in one command
 
 ```bash
-autofollowdown auto               # ⭐ compress every way, benchmark, pick a winner
-autofollowdown info               # version, available backends, benchmark catalog
-autofollowdown benchmark-vision   # real CNN compression benchmark (offline)
-autofollowdown benchmark-llm      # real LLM perplexity benchmark (downloads a small model)
-autofollowdown autopick           # best-library recommendation per model family
+autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ compress, benchmark, pick, save
+autofollowdown compress                                 # offline demo (no model needed)
+autofollowdown info                                     # version, backends, benchmark catalog
+autofollowdown benchmark-vision                         # real CNN benchmark (offline)
+autofollowdown benchmark-llm                            # real LLM perplexity benchmark
+autofollowdown autopick                                 # best-library recommendation per model
 ```
+
+`compress` is the easy headline command: give it any model (a Hugging Face id or a
+`.pt` file), it compresses it every way, benchmarks them, recommends the best, and —
+with `-o` — saves the variant you pick. Run it with no model for the offline demo.
 
 ## What it does
 
@@ -415,6 +422,29 @@ tests/              # real tests (assert actual effects, not flags)
 
 ```bash
 python3 -m pytest -q
+```
+
+## Publishing to PyPI
+
+The package is fully PyPI-ready (`python -m build` produces an sdist + wheel that pass
+`twine check`). Two ways to publish so `pip install autofollowdown` works for everyone:
+
+Automated (recommended) — a GitHub Actions workflow (`.github/workflows/publish.yml`)
+publishes on every GitHub Release using PyPI **Trusted Publishing** (OIDC, no token to
+store). One-time setup: on PyPI → your project → *Publishing*, add a trusted publisher
+(owner `peetwan`, repo `autofollowdown`, workflow `publish.yml`, environment `pypi`).
+Then:
+
+```bash
+git tag v0.1.0 && git push --tags      # or click "Draft a new release" on GitHub
+```
+
+Manual:
+
+```bash
+python -m pip install build twine
+python -m build                        # dist/*.whl + dist/*.tar.gz
+python -m twine upload dist/*          # prompts for your PyPI token
 ```
 
 ## License
