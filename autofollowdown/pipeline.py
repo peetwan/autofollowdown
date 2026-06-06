@@ -18,7 +18,6 @@ import torch
 from ._term import color
 from .api import ModelCompressor
 from .benchmark import Benchmark
-from .profiler import profile_model
 
 # Universal methods that need no training data — applied to every model.
 DEFAULT_METHODS = ["int8 dynamic", "prune 50%", "prune+quantize"]
@@ -132,10 +131,12 @@ def compress_and_benchmark(model, example_input=None, eval_loader=None,
     baseline, and recommends the best size/quality trade-off. `eval_loader`
     enables accuracy/fidelity; if `example_input` is omitted it's inferred.
     """
+    if isinstance(model, str):
+        from .ingestion import load_model            # accept a HF id / .pt path directly
+        model = load_model(model)
     if not isinstance(model, torch.nn.Module):
-        raise ValueError("compress_and_benchmark expects a torch.nn.Module")
+        raise ValueError("compress_and_benchmark expects a torch.nn.Module or a model id/path")
 
-    profile = profile_model(model)
     if example_input is None:
         from .onnx_pipeline import get_working_dummy_input
         example_input = get_working_dummy_input(model, input_shape)
@@ -143,10 +144,12 @@ def compress_and_benchmark(model, example_input=None, eval_loader=None,
     methods = methods or DEFAULT_METHODS
     study = CompressionStudy(model, example_input, eval_loader=eval_loader,
                              device=device, latency_runs=latency_runs)
+    from .gpu import free_memory
     for method in methods:
         try:
             variant = _apply(method, copy.deepcopy(model), calibration_data)
             study.add(method, variant)
         except Exception as e:  # a method may not apply to every model — keep going
             print(color(f"  (skipped {method}: {e})", "yellow"))
+        free_memory()           # release cached VRAM between methods so the next won't OOM
     return study

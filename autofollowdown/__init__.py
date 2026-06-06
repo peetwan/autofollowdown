@@ -1,85 +1,89 @@
-from .api import ModelCompressor
-from .auto import (
-    Recommendation,
-    auto_compress,
-    compress_with,
-    explain,
-    rank_backends,
-    recommend,
-    recommend_profile,
-)
-from .backends import all_backends, get_backend
-from .benchmark import Benchmark
-from .ingestion import load_model
-from .llm_eval import (
-    DEFAULT_ZEROSHOT_SUITE,
-    MMLU_PROX_LANGS,
-    MMMU_DISCIPLINES,
-    STANDARD_LLM_TASKS,
-    evaluate_perplexity,
-    lm_eval_command,
-    load_wikitext2,
-    mmlu_prox_tasks,
-    mmmu_tasks,
-    multimodal_eval_command,
-    perplexity_from_ids,
-)
-from .pipeline import CompressionStudy, compress_and_benchmark
-from .profiler import ModelProfile, profile_from_pretrained, profile_model
-from .metrics import (
-    count_parameters,
-    evaluate_accuracy,
-    measure_latency,
-    measure_model,
-    model_disk_size_mb,
-    output_agreement,
-)
-from .onnx_pipeline import (
-    ONNXCalibrationDataReader,
-    export_to_onnx,
-    optimize_onnx,
-    prune_onnx,
-)
+"""autofollowdown — unified model compression (quantize · prune · distill) with
+real benchmarks and a capability-driven backend router.
 
-__version__ = "0.1.0"
+Quick start (one call does it all):
 
-__all__ = [
-    "ModelCompressor",
-    "Benchmark",
-    "compress_and_benchmark",
-    "CompressionStudy",
-    "auto_compress",
-    "compress_with",
-    "recommend",
-    "recommend_profile",
-    "rank_backends",
-    "explain",
-    "profile_model",
-    "profile_from_pretrained",
-    "ModelProfile",
-    "Recommendation",
-    "all_backends",
-    "get_backend",
-    "evaluate_perplexity",
-    "perplexity_from_ids",
-    "load_wikitext2",
-    "lm_eval_command",
-    "mmlu_prox_tasks",
-    "mmmu_tasks",
-    "multimodal_eval_command",
-    "STANDARD_LLM_TASKS",
-    "DEFAULT_ZEROSHOT_SUITE",
-    "MMLU_PROX_LANGS",
-    "MMMU_DISCIPLINES",
-    "load_model",
-    "count_parameters",
-    "evaluate_accuracy",
-    "measure_latency",
-    "measure_model",
-    "model_disk_size_mb",
-    "output_agreement",
-    "ONNXCalibrationDataReader",
-    "export_to_onnx",
-    "prune_onnx",
-    "optimize_onnx",
-]
+    from autofollowdown import compress_and_benchmark
+    study = compress_and_benchmark("facebook/opt-125m")   # compress, benchmark, pick
+    study.show()
+
+Public names are imported lazily (PEP 562): `import autofollowdown` and the CLI
+stay near-instant, and the heavy deep-learning stack (torch / transformers / onnx)
+is only loaded the first time you actually touch a symbol that needs it.
+"""
+
+__version__ = "0.2.0"
+
+# name -> submodule it lives in. The single source of truth for what we export
+# and where it resolves; `__getattr__` loads the submodule on first access.
+_EXPORTS = {
+    # core API
+    "ModelCompressor": "api",
+    # one-command workflow
+    "compress_and_benchmark": "pipeline",
+    "CompressionStudy": "pipeline",
+    # auto-picker / router
+    "auto_compress": "auto",
+    "compress_with": "auto",
+    "recommend": "auto",
+    "recommend_profile": "auto",
+    "rank_backends": "auto",
+    "explain": "auto",
+    "Recommendation": "auto",
+    "all_backends": "backends",
+    "get_backend": "backends",
+    # profiling
+    "profile_model": "profiler",
+    "profile_from_pretrained": "profiler",
+    "ModelProfile": "profiler",
+    # GPU memory helpers (free / small-GPU friendly)
+    "cuda_info": "gpu",
+    "memory_plan": "gpu",
+    "free_memory": "gpu",
+    "estimate_weight_gb": "gpu",
+    "load_balanced": "gpu",
+    # benchmarking
+    "Benchmark": "benchmark",
+    "count_parameters": "metrics",
+    "evaluate_accuracy": "metrics",
+    "measure_latency": "metrics",
+    "measure_model": "metrics",
+    "model_disk_size_mb": "metrics",
+    "output_agreement": "metrics",
+    # LLM evaluation + benchmark catalog
+    "evaluate_perplexity": "llm_eval",
+    "perplexity_from_ids": "llm_eval",
+    "load_wikitext2": "llm_eval",
+    "lm_eval_command": "llm_eval",
+    "mmlu_prox_tasks": "llm_eval",
+    "mmmu_tasks": "llm_eval",
+    "multimodal_eval_command": "llm_eval",
+    "STANDARD_LLM_TASKS": "llm_eval",
+    "DEFAULT_ZEROSHOT_SUITE": "llm_eval",
+    "MMLU_PROX_LANGS": "llm_eval",
+    "MMMU_DISCIPLINES": "llm_eval",
+    # ingestion
+    "load_model": "ingestion",
+    # ONNX
+    "ONNXCalibrationDataReader": "onnx_pipeline",
+    "export_to_onnx": "onnx_pipeline",
+    "prune_onnx": "onnx_pipeline",
+    "optimize_onnx": "onnx_pipeline",
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name):
+    """PEP 562 lazy attribute loader — imports the owning submodule on demand."""
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+    value = getattr(importlib.import_module(f".{module}", __name__), name)
+    globals()[name] = value          # cache so subsequent access skips __getattr__
+    return value
+
+
+def __dir__():
+    return sorted(list(globals()) + __all__)

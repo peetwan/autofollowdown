@@ -1,30 +1,73 @@
-"""Compression backends and a registry for the auto-picker.
+"""Compression backends and a capability-driven registry for the auto-picker.
 
-Each backend wraps one library. The native backend (this toolkit) always works.
-The others — NNI, llm-compressor, NVIDIA ModelOpt — are optional: they declare
-what they're good at, whether they're installed, and whether the hardware suits
-them, and they delegate to the real library API only when actually available.
+Each backend wraps one library and **declares its capabilities as data** — which
+model families it suits, what it's good at (traits), whether it needs a GPU or a
+calibration set — instead of burying routing logic in hand-written if/else rules.
+A single generic scorer (`Backend.score`) turns those declarations + the model
+profile + the user's goal into a fitness number, so the router stays honest and
+**adding a backend is data, not new branching code**.
 
-This is what lets the router "auto pick the best library based on your model":
-it scores every backend against the model profile and runs the best one that is
-genuinely runnable here, falling back to the native engine otherwise.
+The native backend (this toolkit) always works. The others — NNI, llm-compressor,
+NVIDIA ModelOpt, torchao, bitsandbytes, HQQ — are optional: they're detected at
+runtime and only ever delegate to the real library API when genuinely available.
 """
 
 import importlib.util
+from dataclasses import dataclass
 
 
 def _installed(module_name):
     return importlib.util.find_spec(module_name) is not None
 
 
+# What each user goal cares about, expressed as the backend traits that satisfy it.
+# This is the only place "goal → preference" lives; the scorer just matches sets,
+# so a new goal or trait is a one-line data change, not a routing rewrite.
+GOAL_TRAITS = {
+    "size": frozenset({"smallest", "4bit", "weight-only"}),
+    "speed": frozenset({"fast", "kernel-optimized", "compile"}),
+    "accuracy": frozenset({"accurate", "calibrated"}),
+    "ease": frozenset({"easy", "no-calibration", "portable"}),
+    "balanced": frozenset(),
+}
+
+# Traits a goal actively steers *away* from (e.g. "ease" should avoid methods that
+# need a calibration dataset). Also pure data — keeps the scorer free of if/else.
+GOAL_AVOID = {
+    "ease": frozenset({"calibrated"}),
+}
+
+
+@dataclass(frozen=True)
+class Capability:
+    """A backend's declared fitness — pure data the scorer reads, no logic."""
+
+    technique: str                       # e.g. "weight-only-quant"
+    scheme: str                          # human label, e.g. "GPTQ W4A16"
+    rationale: str                       # why it ranks where it does
+    families: dict                       # model family -> base fit in [0, 1]
+    traits: frozenset = frozenset()      # tags matched against GOAL_TRAITS
+    needs_cuda: bool = False
+    needs_calibration: bool = False
+    hf_bonus: float = 0.0                # added when the model is a HF model
+
+
 class Backend:
-    """Base backend. Subclasses set metadata and implement plan()/compress()."""
+    """Base backend. Subclasses set `capability` (data) and implement `compress`.
+
+    Scoring and planning are derived generically from `capability`, so the router
+    never special-cases a backend by name.
+    """
 
     name = "backend"
-    alias = "backend"       # short, typeable handle (e.g. "nni", "modelopt")
-    library = None          # pip importable module name, or None for built-in
+    alias = "backend"          # short, typeable handle (e.g. "nni", "modelopt")
+    library = None             # pip importable module name, or None for built-in
     install_hint = ""
-    needs_cuda = False
+    capability = None
+
+    @property
+    def needs_cuda(self):
+        return bool(self.capability and self.capability.needs_cuda)
 
     def is_available(self):
         if self.library is None:
@@ -34,13 +77,35 @@ class Backend:
     def device_ok(self, profile):
         return (not self.needs_cuda) or profile.cuda_available
 
-    def score(self, profile):
-        """Fitness in [0, 1] for this model family. 0 means 'not applicable'."""
-        return 0.0
+    def score(self, profile, goal="balanced"):
+        """Fitness in [0, 1], derived from declared capabilities + the goal.
+
+        base family fit  (+ HF bonus if applicable)  + small per-goal trait nudge.
+        Returns 0 when the backend simply doesn't apply to this family.
+        """
+        cap = self.capability
+        if cap is None:
+            return 0.0
+        base = cap.families.get(profile.family, 0.0)
+        if base <= 0:
+            return 0.0
+        score = base
+        if profile.is_huggingface:
+            score += cap.hf_bonus
+        # Goal alignment: reward declared traits the goal wants, penalize ones it
+        # steers away from. Both sides are read from the GOAL_* data maps, so the
+        # routing has no per-backend special-casing.
+        wanted = GOAL_TRAITS.get(goal, frozenset())
+        score += 0.06 * len(cap.traits & wanted)
+        avoid = GOAL_AVOID.get(goal, frozenset())
+        score -= 0.10 * len(cap.traits & avoid)
+        return max(0.0, min(1.0, score))
 
     def plan(self, profile):
-        """Return (technique, scheme, rationale) — the recommended approach."""
-        raise NotImplementedError
+        """Return (technique, scheme, rationale). Backends whose scheme depends on
+        the family override this; the rest read it straight from `capability`."""
+        cap = self.capability
+        return (cap.technique, cap.scheme, cap.rationale)
 
     def compress(self, model, profile, **kwargs):
         raise NotImplementedError
@@ -51,12 +116,16 @@ class NativeBackend(Backend):
     alias = "native"
     library = None
     install_hint = "(built in)"
-
-    def score(self, profile):
-        # Universal fallback: always applicable, modest score so a specialized
-        # available backend wins, but it still beats an unavailable one.
-        return {"cnn": 0.6, "mlp": 0.6, "transformer": 0.5,
-                "llm": 0.4, "unknown": 0.5}.get(profile.family, 0.5)
+    # Universal fallback: applies everywhere with a modest fit, so a specialized
+    # *available* backend wins, but it still beats an unavailable one.
+    capability = Capability(
+        technique="prune+quantize",
+        scheme="int8-dynamic",
+        rationale="Portable INT8 (and pruning/distillation) with no extra deps — "
+                  "the always-runnable fallback.",
+        families={"cnn": 0.6, "mlp": 0.6, "transformer": 0.5, "llm": 0.4, "unknown": 0.5},
+        traits=frozenset({"portable", "no-calibration", "easy"}),
+    )
 
     def plan(self, profile):
         if profile.family == "cnn":
@@ -82,18 +151,14 @@ class NNIBackend(Backend):
     alias = "nni"
     library = "nni"
     install_hint = "pip install nni"
-
-    def score(self, profile):
-        if profile.family == "cnn":
-            return 0.9   # filter pruning + ModelSpeedup physically shrinks CNNs
-        if profile.family == "transformer":
-            return 0.5   # has TransformerHeadPruner
-        return 0.2
-
-    def plan(self, profile):
-        return ("structured-prune", "L1FilterPruner + ModelSpeedup",
-                "Channel/filter pruning that ModelSpeedup turns into a genuinely "
-                "smaller, faster model (real FLOP reduction).")
+    capability = Capability(
+        technique="structured-prune",
+        scheme="L1FilterPruner + ModelSpeedup",
+        rationale="Channel/filter pruning that ModelSpeedup turns into a genuinely "
+                  "smaller, faster model (real FLOP reduction).",
+        families={"cnn": 0.9, "transformer": 0.5, "llm": 0.2},
+        traits=frozenset({"fast", "structured", "smallest"}),
+    )
 
     def compress(self, model, profile, sparsity=0.5, dummy_input=None, **kwargs):
         if not self.is_available():
@@ -133,30 +198,46 @@ class LLMCompressorBackend(Backend):
     alias = "llmcompressor"
     library = "llmcompressor"
     install_hint = "pip install llmcompressor"
-
-    def score(self, profile):
-        if profile.family == "llm" and profile.is_huggingface:
-            return 0.95  # GPTQ/AWQ weight-only 4-bit is the LLM sweet spot
-        if profile.family == "llm":
-            return 0.6
-        return 0.0
-
-    def plan(self, profile):
-        return ("weight-only-quant", "GPTQ W4A16",
-                "4-bit weight-only PTQ (GPTQ/AWQ) for HF LLMs, deployable in vLLM. "
-                "GPU strongly recommended.")
+    capability = Capability(
+        technique="weight-only-quant",
+        scheme="GPTQ W4A16",
+        rationale="4-bit weight-only PTQ (GPTQ/AWQ) for HF LLMs, deployable in vLLM. "
+                  "Sequential onloading runs it on a small/free GPU.",
+        families={"llm": 0.6, "transformer": 0.3},
+        traits=frozenset({"smallest", "4bit", "weight-only", "accurate", "calibrated",
+                          "kernel-optimized"}),
+        needs_calibration=True,
+        hf_bonus=0.35,     # GPTQ/AWQ on a HF LLM is the sweet spot (-> 0.95)
+    )
 
     def compress(self, model, profile, dataset=None, recipe=None,
-                 num_calibration_samples=512, output_dir=None, **kwargs):
+                 num_calibration_samples=512, output_dir=None,
+                 pipeline=None, sequential_targets=None, **kwargs):
         if not self.is_available():
             raise RuntimeError("llm-compressor is not installed. " + self.install_hint)
         # Real delegation to llmcompressor.oneshot (API per vLLM llm-compressor docs).
         from llmcompressor import oneshot
         from llmcompressor.modifiers.gptq import GPTQModifier
+
+        from .gpu import memory_plan
+
         recipe = recipe or GPTQModifier(targets="Linear", scheme="W4A16",
                                         ignore=["lm_head"])
-        oneshot(model=model, dataset=dataset, recipe=recipe,
-                num_calibration_samples=num_calibration_samples, output_dir=output_dir)
+        # Memory-saving defaults so this runs on a free/small GPU instead of OOM:
+        # sequential onloading keeps one slice of the model on the GPU at a time.
+        # Caller-supplied values always win over the auto plan.
+        plan = memory_plan(profile.num_params or 0)
+        one = dict(model=model, dataset=dataset, recipe=recipe,
+                   num_calibration_samples=num_calibration_samples,
+                   output_dir=output_dir)
+        chosen_pipeline = pipeline or plan["pipeline"]
+        if chosen_pipeline:
+            one["pipeline"] = chosen_pipeline
+        chosen_targets = sequential_targets or plan["sequential_targets"]
+        if chosen_targets:
+            one["sequential_targets"] = chosen_targets
+        one.update(kwargs)
+        oneshot(**one)
         return model
 
 
@@ -165,20 +246,20 @@ class ModelOptBackend(Backend):
     alias = "modelopt"
     library = "modelopt"
     install_hint = "pip install nvidia-modelopt"
-    needs_cuda = True
-
-    def score(self, profile):
-        if profile.family in ("llm", "transformer"):
-            return 0.9   # SmoothQuant/AWQ/NVFP4 PTQ → TensorRT, best on NVIDIA GPUs
-        if profile.family == "cnn":
-            return 0.6
-        return 0.3
+    capability = Capability(
+        technique="ptq",
+        scheme="INT8 SmoothQuant",
+        rationale="Calibrated PTQ (SmoothQuant/AWQ/NVFP4) via mtq.quantize, exportable "
+                  "to TensorRT. Requires an NVIDIA GPU.",
+        families={"llm": 0.9, "transformer": 0.9, "cnn": 0.6, "unknown": 0.3},
+        traits=frozenset({"fast", "kernel-optimized", "accurate", "calibrated", "4bit"}),
+        needs_cuda=True,
+        needs_calibration=True,
+    )
 
     def plan(self, profile):
         scheme = "INT8 SmoothQuant" if profile.family != "cnn" else "INT8 PTQ"
-        return ("ptq", scheme,
-                "Calibrated PTQ (SmoothQuant/AWQ/NVFP4) via mtq.quantize, exportable "
-                "to TensorRT. Requires an NVIDIA GPU.")
+        return ("ptq", scheme, self.capability.rationale)
 
     def compress(self, model, profile, calibration_data=None, quant_cfg=None, **kwargs):
         if not self.is_available():
@@ -196,12 +277,115 @@ class ModelOptBackend(Backend):
         return mtq.quantize(model, quant_cfg, forward_loop)
 
 
+class TorchAOBackend(Backend):
+    name = "torchao (PyTorch native)"
+    alias = "torchao"
+    library = "torchao"
+    install_hint = "pip install torchao"
+    capability = Capability(
+        technique="weight-only-quant",
+        scheme="int8/int4 weight-only (+ torch.compile)",
+        rationale="PyTorch-native int8/int4/fp8 with no calibration; pairs with "
+                  "torch.compile for fast inference and has real CPU support.",
+        families={"llm": 0.7, "transformer": 0.65, "cnn": 0.5, "mlp": 0.5, "unknown": 0.4},
+        traits=frozenset({"fast", "compile", "no-calibration", "weight-only", "portable",
+                          "easy"}),
+    )
+
+    def compress(self, model, profile, scheme="int8-weight-only", **kwargs):
+        if not self.is_available():
+            raise RuntimeError("torchao is not installed. " + self.install_hint)
+        # Real delegation to torchao.quantization.quantize_ (PyTorch-native API).
+        from torchao.quantization import quantize_
+        want_int4 = "int4" in scheme
+        try:  # newer config-object API
+            from torchao.quantization import Int4WeightOnlyConfig, Int8WeightOnlyConfig
+            cfg = Int4WeightOnlyConfig() if want_int4 else Int8WeightOnlyConfig()
+        except ImportError:  # older factory-function API
+            from torchao.quantization import int4_weight_only, int8_weight_only
+            cfg = int4_weight_only() if want_int4 else int8_weight_only()
+        quantize_(model, cfg)
+        return model
+
+
+class BitsAndBytesBackend(Backend):
+    name = "bitsandbytes"
+    alias = "bnb"
+    library = "bitsandbytes"
+    install_hint = "pip install bitsandbytes"
+    capability = Capability(
+        technique="weight-only-quant",
+        scheme="NF4 / INT8 (load-time)",
+        rationale="The easiest 4-bit/8-bit path — no calibration, loads quantized "
+                  "directly through transformers. Great for a quick free-GPU win.",
+        families={"llm": 0.65, "transformer": 0.5},
+        traits=frozenset({"easy", "no-calibration", "4bit", "smallest"}),
+        needs_cuda=True,
+        hf_bonus=0.05,
+    )
+
+    def compress(self, model, profile, model_id=None, bits=4, device_map="auto", **kwargs):
+        if not self.is_available():
+            raise RuntimeError("bitsandbytes is not installed. " + self.install_hint)
+        # bitsandbytes quantizes at *load* time (it swaps in bnb Linear layers as the
+        # model is built), so we reload the model id with a BitsAndBytesConfig.
+        if model_id is None:
+            model_id = (profile.detail or {}).get("model_id")
+        if model_id is None:
+            raise RuntimeError(
+                "bitsandbytes quantizes at load time — pass model_id='<hf id>' so it "
+                "can reload the model in 4/8-bit.")
+        from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+        if bits == 4:
+            cfg = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                                     bnb_4bit_use_double_quant=True)
+        else:
+            cfg = BitsAndBytesConfig(load_in_8bit=True)
+        return AutoModelForCausalLM.from_pretrained(
+            model_id, quantization_config=cfg, device_map=device_map)
+
+
+class HQQBackend(Backend):
+    name = "HQQ (Half-Quadratic Quantization)"
+    alias = "hqq"
+    library = "hqq"
+    install_hint = "pip install hqq"
+    capability = Capability(
+        technique="weight-only-quant",
+        scheme="HQQ 4-bit (no calibration)",
+        rationale="Fast, calibration-free quantization down to 4/3/2-bit; runs on a "
+                  "free GPU and pairs with torch.compile for speed.",
+        families={"llm": 0.68, "transformer": 0.55},
+        traits=frozenset({"fast", "no-calibration", "4bit", "compile", "easy"}),
+        hf_bonus=0.05,
+    )
+
+    def compress(self, model, profile, nbits=4, group_size=64, **kwargs):
+        if not self.is_available():
+            raise RuntimeError("HQQ is not installed. " + self.install_hint)
+        # Real delegation to HQQ's in-place model quantizer (API per HQQ docs).
+        import torch
+        from hqq.core.quantize import BaseQuantizeConfig
+        try:
+            from hqq.models.hf.base import AutoHQQHFModel
+        except ImportError:  # older module path
+            from hqq.engine.hf import AutoHQQHFModel
+        cfg = BaseQuantizeConfig(nbits=nbits, group_size=group_size)
+        dev = "cuda" if profile.cuda_available else "cpu"
+        dtype = torch.float16 if profile.cuda_available else torch.float32
+        AutoHQQHFModel.quantize_model(model, quant_config=cfg, compute_dtype=dtype, device=dev)
+        return model
+
+
 # Registry — order is only a tiebreak; the router scores them.
 _REGISTRY = [
     NativeBackend(),
     NNIBackend(),
     LLMCompressorBackend(),
     ModelOptBackend(),
+    TorchAOBackend(),
+    BitsAndBytesBackend(),
+    HQQBackend(),
 ]
 
 

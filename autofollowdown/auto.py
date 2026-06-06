@@ -31,11 +31,16 @@ class Recommendation:
                 f"({self.technique}) — {status}")
 
 
-def rank_backends(profile):
-    """Rank every applicable backend for a given ModelProfile (no model needed)."""
+def rank_backends(profile, goal="balanced"):
+    """Rank every applicable backend for a given ModelProfile (no model needed).
+
+    `goal` (balanced/accuracy/size/speed/ease) nudges the ranking toward backends
+    whose declared traits match what you care about — the scoring is derived from
+    each backend's declared `Capability`, not from per-backend hardcoded rules.
+    """
     recs = []
     for b in all_backends():
-        score = b.score(profile)
+        score = b.score(profile, goal)
         if score <= 0:
             continue
         technique, scheme, rationale = b.plan(profile)
@@ -64,10 +69,10 @@ def recommend(model):
     return _build(model)
 
 
-def recommend_profile(profile):
+def recommend_profile(profile, goal="balanced"):
     """Like `recommend`, but for a pre-built ModelProfile (e.g. from a HF config —
     no weight download). Returns (profile, ranked list[Recommendation])."""
-    return profile, rank_backends(profile)
+    return profile, rank_backends(profile, goal)
 
 
 def explain(model):

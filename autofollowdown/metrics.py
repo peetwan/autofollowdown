@@ -19,11 +19,14 @@ def count_parameters(model):
     report pruning — a mask that is never made permanent would show 0 sparsity.
     """
     total = 0
-    nonzero = 0
+    nonzero_acc = None
     for p in model.parameters():
-        n = p.numel()
-        total += n
-        nonzero += int(torch.count_nonzero(p).item())
+        total += p.numel()
+        c = torch.count_nonzero(p)
+        # Accumulate on-device and sync only once at the end (one host transfer
+        # instead of one per tensor — matters on GPU / large models).
+        nonzero_acc = c if nonzero_acc is None else nonzero_acc + c.to(nonzero_acc.device)
+    nonzero = int(nonzero_acc.item()) if nonzero_acc is not None else 0
     sparsity = 0.0 if total == 0 else 1.0 - (nonzero / total)
     return total, nonzero, sparsity
 

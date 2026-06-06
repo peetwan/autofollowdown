@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autofollowdown"
-version = "0.1.0"
+version = "0.2.0"
 description = "A unified, simple toolkit for quantizing, pruning, and distilling AI models — with a real benchmark."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -36,6 +36,10 @@ dependencies = [
 [project.optional-dependencies]
 examples = ["scikit-learn>=1.2", "datasets>=2.0"]
 llm-eval = ["lm-eval>=0.4", "datasets>=2.0"]
+# Optional compression backends — the router uses whichever are installed.
+torchao = ["torchao>=0.7"]
+bnb = ["bitsandbytes>=0.43"]
+hqq = ["hqq>=0.2"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

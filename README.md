@@ -3,6 +3,8 @@
 [![tests](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml/badge.svg)](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![version](https://img.shields.io/badge/version-0.2.0-blueviolet)](CHANGELOG.md)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 A unified, simple toolkit for compressing AI models — `quantization`, `pruning`,
 and `knowledge distillation` behind one small API — plus a `real benchmark` that
@@ -80,6 +82,10 @@ onnx, onnxruntime, onnxscript, transformers, numpy) install automatically.
 
 ### 📓 Notebooks
 
+- [`notebooks/autofollowdown_showcase.ipynb`](notebooks/autofollowdown_showcase.ipynb) —
+  **start here: every command in ~2 min.** `install → --help → info → gpu → recommend →
+  compress → autopick`, each cell running the real CLI with real output (on GitHub). Shows the
+  memory-saving plan that runs big LLMs on a **free** GPU.
 - [`notebooks/autofollowdown_cpu_demo.ipynb`](notebooks/autofollowdown_cpu_demo.ipynb) —
   **runs entirely on CPU in ~2–3 min, no GPU.** Real results (outputs on GitHub): the three
   techniques on a CNN, the one-command benchmark, the auto-picker, and an OPT-125M
@@ -102,6 +108,7 @@ onnx, onnxruntime, onnxscript, transformers, numpy) install automatically.
 autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ compress, benchmark, pick, save
 autofollowdown compress                                 # offline demo (no model needed)
 autofollowdown recommend Qwen/Qwen3-0.6B --goal accuracy   # best library for your LLM (+ why)
+autofollowdown gpu Qwen/Qwen3-0.6B                      # GPU + memory plan to run it on a free GPU
 autofollowdown info                                     # version, backends, benchmark catalog
 autofollowdown benchmark-vision                         # real CNN benchmark (offline)
 autofollowdown benchmark-llm                            # real LLM perplexity benchmark
@@ -276,6 +283,12 @@ There are many compression libraries, each best at something different. autofoll
 profiles your model and recommends (and can run) the best one for it — falling back
 to the always-available native engine when an optional library isn't installed.
 
+The router is **capability-driven, not hardcoded**: every backend *declares* what it's
+good at (which model families, which traits — `fast` / `smallest` / `no-calibration` /
+`calibrated` …), and a single generic scorer ranks them against your model and your
+`--goal`. Adding a backend is a data entry, not new routing code — so the ranking stays
+transparent and easy to extend.
+
 ```python
 from autofollowdown import explain, recommend, auto_compress
 
@@ -303,9 +316,14 @@ Backends and what they're chosen for:
 | Microsoft NNI | CNNs / vision | structured filter pruning + `ModelSpeedup` (real shrink) | `pip install nni` |
 | llm-compressor (vLLM) | HF LLMs | GPTQ/AWQ 4-bit weight-only (`oneshot`) | `pip install llmcompressor` (GPU) |
 | NVIDIA ModelOpt | LLMs / transformers | SmoothQuant/AWQ/NVFP4 PTQ → TensorRT | `pip install nvidia-modelopt` (NVIDIA GPU) |
+| torchao | LLMs / any (native) | int8/int4/fp8 weight-only + `torch.compile`, no calibration | `pip install torchao` |
+| bitsandbytes | HF LLMs (easiest) | NF4 / INT8 at load time, no calibration | `pip install bitsandbytes` (GPU) |
+| HQQ | HF LLMs | fast 4/3/2-bit, no calibration | `pip install hqq` |
 
 The ranking always shows the *ideal* backend even if it isn't installed, plus the
 best one you can run right now. `recommend()` is advisory; `auto_compress()` executes.
+Pass `--goal {balanced,accuracy,size,speed,ease}` to route by what you care about — e.g.
+`--goal ease` surfaces the no-calibration backends (torchao / HQQ / bitsandbytes).
 
 #### Find the best library for your LLM — and see *why*
 
@@ -355,6 +373,30 @@ compress_with(qwen, "modelopt", calibration_data=calib)         # NVIDIA SmoothQ
 Try it: `python3 examples/autopick_demo.py` — and the demo notebook calls `compress_with`
 on both a CNN and Qwen so you can see each backend's exact invocation.
 
+### Runs on a free GPU 🆓 (memory-saving, automatic)
+
+Quantizing an LLM normally wants a lot of VRAM. autofollowdown applies the technique from
+llm-compressor's own docs — **sequential onloading** — so it doesn't have to: only one slice
+of the model sits on the GPU at a time while the rest waits on CPU/disk. When VRAM is tight it
+drops to onloading **one `Linear` at a time** (`sequential_targets="Linear"`). The result: even
+big models calibrate on a single **free 16 GB Colab/Kaggle T4** — just a bit slower.
+
+It's automatic — the `llmcompressor` backend picks these settings from the model size and your
+free VRAM. `autofollowdown gpu <model>` shows you the plan first:
+
+```bash
+autofollowdown gpu Qwen/Qwen3-0.6B     # GPU detected + the exact pipeline/targets it will use
+```
+
+```python
+from autofollowdown import cuda_info, memory_plan, free_memory, load_balanced
+
+cuda_info()                            # {'available': True, 'name': 'Tesla T4', 'free_gb': 14.8, ...}
+plan = memory_plan(7e9, vram_gb=16)    # -> pipeline='sequential', device_map='auto' (offloads the rest)
+model = load_balanced("Qwen/Qwen3-0.6B")   # device_map='auto' so a model bigger than VRAM still loads
+free_memory()                          # release cached VRAM between methods so the next one doesn't OOM
+```
+
 ## How it works (architecture & flow)
 
 autofollowdown is a thin, honest pipeline: **ingest → profile → compress → measure →
@@ -371,11 +413,14 @@ flowchart TD
     E --> H
     F --> H
     G --> H
-    subgraph H["Compression backends (registry)"]
+    subgraph H["Compression backends (capability-driven registry)"]
       H1["native — torch prune / INT8 / KD (always on)"]
       H2["NNI — structured pruning + ModelSpeedup"]
       H3["llm-compressor — GPTQ/AWQ 4-bit (LLMs)"]
       H4["NVIDIA ModelOpt — PTQ → TensorRT (GPU)"]
+      H5["torchao — int8/int4/fp8 + torch.compile"]
+      H6["bitsandbytes — NF4/INT8 (easiest)"]
+      H7["HQQ — fast 4/3/2-bit, no calibration"]
     end
     H --> I["metrics: size_mb · latency · sparsity · accuracy · fidelity · perplexity"]
     I --> J["Benchmark / CompressionStudy<br/>before↔after table + ➤ recommended pick"]
@@ -423,12 +468,18 @@ flowchart TD
 
 ### Backend registry (`backends.py`)
 
-Each backend declares: availability (is the library importable?), hardware fit (`needs_cuda`),
-a fitness `score(profile)`, the `plan` it would run, and a real `compress()` that calls the
-library's documented API. The **native** backend is always available; `NNI`, `llm-compressor`,
-and `NVIDIA ModelOpt` register only when installed. `auto_compress` runs the highest-scoring
-*runnable* backend (falling back to native); `compress_with(model, "alias")` forces a specific
-one — running the real library when present, or telling you exactly how to enable it.
+Each backend declares a `Capability` as **data** — which model families it suits, its traits
+(`fast` / `smallest` / `no-calibration` / `calibrated` …), whether it needs a GPU or a
+calibration set — plus a real `compress()` that calls the library's documented API. One generic
+scorer turns those declarations + the model profile + your goal into a fitness number (the
+goal→trait preferences live in the `GOAL_TRAITS` / `GOAL_AVOID` data maps), so **routing has no
+per-backend hardcoded rules and a new backend is a data entry, not new branching code**.
+
+The **native** backend is always available; `NNI`, `llm-compressor`, `NVIDIA ModelOpt`,
+`torchao`, `bitsandbytes`, and `HQQ` register only when installed. `auto_compress` runs the
+highest-scoring *runnable* backend (falling back to native); `compress_with(model, "alias")`
+forces a specific one — running the real library when present, or telling you exactly how to
+enable it.
 
 ### Data objects you'll see
 
@@ -444,6 +495,7 @@ autofollowdown/
   api.py            # ModelCompressor — the unified compression API
   pipeline.py       # compress_and_benchmark() + CompressionStudy (the one-command flow)
   auto.py           # auto-picker: recommend() / explain() / auto_compress()
+  gpu.py            # GPU memory planner — sequential onloading so LLMs run on a free GPU
   backends.py       # backend registry (native + NNI + llm-compressor + ModelOpt)
   profiler.py       # model profiling (family / size / hardware)
   metrics.py        # real measurements (size, latency, accuracy, fidelity)
@@ -459,6 +511,7 @@ examples/
   benchmark_llm.py      # real LLM perplexity benchmark (WikiText-2)
   autopick_demo.py      # auto-pick the best backend per model
 notebooks/
+  autofollowdown_showcase.ipynb        # every CLI command in ~2 min (real output) — start here
   autofollowdown_cpu_demo.ipynb        # CPU-only demo, real outputs, ~1–2 min (no GPU)
   autofollowdown_demo.ipynb            # runnable walkthrough of the whole toolkit
   autofollowdown_backends_colab.ipynb  # Colab T4: install + run NNI / llm-compressor / ModelOpt

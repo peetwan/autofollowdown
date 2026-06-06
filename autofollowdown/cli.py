@@ -5,6 +5,7 @@ After `pip install autofollowdown`, run everything without touching the source:
     autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ the easy one
     autofollowdown compress                                 # offline demo (no model needed)
     autofollowdown recommend Qwen/Qwen3-0.6B --goal accuracy  # best library for your LLM + why
+    autofollowdown gpu Qwen/Qwen3-0.6B                      # GPU + memory-saving plan (free-GPU friendly)
     autofollowdown info                                     # version, backends, catalog
     autofollowdown benchmark-vision                         # offline CNN benchmark
     autofollowdown benchmark-llm                            # LLM perplexity benchmark
@@ -55,6 +56,8 @@ _GOAL_NOTE = {
              "4-bit (llm-compressor) is fast under vLLM.",
     "balanced": "INT8 — native dynamic for portability/CPU, or ModelOpt/llm-compressor "
                 "for better quality on a GPU.",
+    "ease": "no-calibration, load-and-go: bitsandbytes (NF4/INT8) or HQQ/torchao are the "
+            "least-effort paths and need no calibration data.",
 }
 
 
@@ -73,7 +76,7 @@ def _cmd_recommend(args):
         print(f"Reading config for {model} (no weights downloaded) ...")
         profile = profile_from_pretrained(model)
 
-    recs = rank_backends(profile)
+    recs = rank_backends(profile, args.goal)
     pcount = f"~{profile.num_params/1e6:.0f}M" + (" (est.)" if profile.detail.get("estimated") else "")
     print(color(f"\nModel: {model}", "bold", "cyan"))
     print(f"  family={profile.family} · params={pcount} · "
@@ -131,6 +134,48 @@ def _recommend_benchmark(model, profile, max_chars):
           f"{qppl - base:+.2f} perplexity here — which is exactly why, for LLMs, "
           "autofollowdown recommends weight-only GPTQ/AWQ (llm-compressor) or "
           "calibrated ModelOpt over native dynamic INT8.")
+
+
+def _cmd_gpu(args):
+    """Show the current GPU and the memory-saving plan for a given model — the
+    settings that let the heavy backends run on a free/small GPU."""
+    from .gpu import cuda_info, memory_plan
+
+    info = cuda_info()
+    if info["available"]:
+        print(color(f"\nGPU: {info['name']}", "bold", "cyan"))
+        print(f"  {info['free_gb']:.1f} GB free / {info['total_gb']:.1f} GB total\n")
+    else:
+        print(color("\nGPU: none (CPU-only)", "bold", "yellow"))
+        print("  Native INT8 runs here; the GPU backends need a free Colab/Kaggle T4.\n")
+
+    if not args.model:
+        print("Pass a model id to see its memory-saving plan, e.g.:")
+        print("  autofollowdown gpu Qwen/Qwen3-0.6B")
+        return
+
+    from .profiler import profile_from_pretrained, profile_model
+    if args.model.endswith((".pt", ".pth")):
+        import torch
+        profile = profile_model(torch.load(args.model, weights_only=False))
+    else:
+        print(f"Reading config for {args.model} (no weights downloaded) ...")
+        profile = profile_from_pretrained(args.model)
+
+    plan = memory_plan(profile.num_params or 0, vram_gb=args.vram)
+    from .gpu import estimate_weight_gb
+    print(color(f"\nModel: {args.model}", "bold"))
+    print(f"  ~{(profile.num_params or 0)/1e6:.0f}M params "
+          f"(~{estimate_weight_gb(profile.num_params or 0):.1f} GB in fp16)\n")
+    print(color("Memory-saving plan (llm-compressor):", "bold"))
+    print(f"  strategy           : {plan['strategy']}")
+    print(f"  pipeline           : {plan['pipeline']}")
+    print(f"  sequential_targets : {plan['sequential_targets'] or '(default decoder layers)'}")
+    print(f"  device_map         : {plan['device_map']}")
+    print(color("→ ", "green") + plan["note"])
+    print("\nUse it directly:")
+    print(color(f"  compress_with(model, 'llmcompressor', pipeline='{plan['pipeline']}', "
+                f"sequential_targets={plan['sequential_targets']!r})", "cyan"))
 
 
 def _cmd_info(args):
@@ -204,12 +249,21 @@ def build_parser():
         help="find the best library for a model (esp. LLMs) and explain why, with evidence")
     r.add_argument("model", help="Hugging Face model id (config only) or .pt path")
     r.add_argument("--goal", default="balanced",
-                   choices=["balanced", "accuracy", "size", "speed"],
+                   choices=["balanced", "accuracy", "size", "speed", "ease"],
                    help="what you care about most")
     r.add_argument("--benchmark", action="store_true",
                    help="download the model and measure native-INT8 vs fp32 perplexity as evidence")
     r.add_argument("--max-chars", type=int, default=3000, help="eval text length for --benchmark")
     r.set_defaults(func=_cmd_recommend)
+
+    g = sub.add_parser(
+        "gpu",
+        help="show your GPU + the memory-saving plan that runs a model on a free/small GPU")
+    g.add_argument("model", nargs="?", default=None,
+                   help="HF model id or .pt path to plan for (optional)")
+    g.add_argument("--vram", type=float, default=None,
+                   help="pretend this many GB of VRAM are free (for planning on CPU)")
+    g.set_defaults(func=_cmd_gpu)
 
     sub.add_parser("info", help="show version, backends, and benchmark catalog"
                    ).set_defaults(func=_cmd_info)
@@ -235,7 +289,32 @@ def main(argv=None):
     if not getattr(args, "command", None):
         parser.print_help()
         return
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        print(color("\nInterrupted.", "yellow"))
+        raise SystemExit(130)
+    except Exception as e:           # one friendly line instead of a raw traceback
+        raise SystemExit(color("Error: ", "red", "bold") + _friendly_error(e))
+
+
+def _friendly_error(e):
+    """Turn common failures into an actionable one-liner (set AFD_DEBUG=1 for the
+    full traceback)."""
+    import os
+    if os.environ.get("AFD_DEBUG"):
+        import traceback
+        traceback.print_exc()
+    msg = str(e).strip() or e.__class__.__name__
+    name = e.__class__.__name__
+    if isinstance(e, ImportError) or "not installed" in msg:
+        return f"{msg}\n  → install the optional backend shown above, then retry."
+    if name in ("RepositoryNotFoundError", "EntryNotFoundError") or "is not a local folder" in msg \
+            or "Can't load" in msg or isinstance(e, FileNotFoundError):
+        return (f"could not find the model — check the id/path and your network.\n  ({msg})")
+    if name in ("OSError", "ConnectionError") or "Connection" in msg:
+        return f"network/IO error reaching the model hub.\n  ({msg})"
+    return f"{msg}\n  (set AFD_DEBUG=1 for the full traceback)"
 
 
 if __name__ == "__main__":
