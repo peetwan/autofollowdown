@@ -188,19 +188,20 @@ def test_quantization_precision_and_correctness():
         cos_sim_stat = np.dot(base_out.flatten(), stat_out.flatten()) / (np.linalg.norm(base_out) * np.linalg.norm(stat_out))
         assert cos_sim_stat > 0.85
         
-        # Assert quantized models are smaller than original
-        orig_size = os.path.getsize(onnx_path)
-        dyn_size = os.path.getsize(dyn_path)
-        stat_size = os.path.getsize(stat_path)
-        
-        # Quantized model sizes should be strictly smaller if there are weights to quantize
-        # DeepConvModel has linear and conv layer weights which are quantized to 8-bit.
-        assert dyn_size < orig_size
-        assert stat_size < orig_size
-        
-        print(f"Original size: {orig_size} bytes")
-        print(f"Dynamic quantized size: {dyn_size} bytes (Cos Sim: {cos_sim_dyn:.4f})")
-        print(f"Static quantized size: {stat_size} bytes (Cos Sim: {cos_sim_stat:.4f})")
+        # Assert the models were genuinely quantized: their weight initializers
+        # are now 8-bit. (Comparing raw .onnx file sizes is unreliable across torch
+        # versions — newer exporters store fp32 weights as external data, so the
+        # baseline .onnx file can be tiny while the embedded-int8 output looks bigger.)
+        def _int8_initializers(path):
+            m = onnx.load(path)
+            return sum(1 for i in m.graph.initializer
+                       if i.data_type in (onnx.TensorProto.INT8, onnx.TensorProto.UINT8))
+
+        assert _int8_initializers(dyn_path) > 0, "dynamic quant produced no int8 weights"
+        assert _int8_initializers(stat_path) > 0, "static quant produced no int8 weights"
+
+        print(f"Dynamic quant: {_int8_initializers(dyn_path)} int8 tensors (Cos Sim: {cos_sim_dyn:.4f})")
+        print(f"Static quant: {_int8_initializers(stat_path)} int8 tensors (Cos Sim: {cos_sim_stat:.4f})")
         
     finally:
         for p in [onnx_path, dyn_path, stat_path]:
