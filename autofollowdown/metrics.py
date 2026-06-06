@@ -4,7 +4,8 @@ Every function here measures an actual property of a real model — no mocks,
 no hardcoded numbers. These are the primitives the benchmark engine composes.
 """
 
-import io
+import os
+import tempfile
 import time
 
 import torch
@@ -28,15 +29,21 @@ def count_parameters(model):
 
 
 def model_disk_size_mb(model):
-    """Serialize the model to an in-memory buffer and return its size in MB.
+    """Serialize the model to a temp file and return its size in MB.
 
     We serialize rather than estimate, because quantized tensors, buffers, and
     packed params all change the real on-disk footprint in ways a parameter
-    count cannot capture.
+    count cannot capture. We write to a temp file (not an in-memory buffer) so
+    measuring multi-GB models (e.g. a few-billion-param LLM) doesn't blow up RAM.
     """
-    buffer = io.BytesIO()
-    torch.save(model, buffer)
-    return buffer.getbuffer().nbytes / (1024 * 1024)
+    fd, path = tempfile.mkstemp(suffix=".pt")
+    os.close(fd)
+    try:
+        torch.save(model, path)
+        return os.path.getsize(path) / (1024 * 1024)
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
 
 
 def _forward(model, batch):

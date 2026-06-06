@@ -144,6 +144,25 @@ What this honestly shows: INT8 cuts size `3.56×` with no accuracy loss but is *
 on a tiny CPU model (quant/dequant overhead); distillation is `4.5×` faster and
 smaller but trades `~6%` accuracy. Real tradeoffs, not marketing.
 
+#### Works on bigger models too (Qwen `< 8B`)
+
+```bash
+autofollowdown benchmark-llm --model Qwen/Qwen3-0.6B     # 1.7B / 3B too; GPU for >1B
+```
+
+Real measured output (Qwen3-0.6B, 596M params, WikiText-2):
+
+```
+| Model            | Size (MB) | Perplexity↓ | Size× | ΔPPL   |
+| Qwen3-0.6B fp32  | 2274      | 20.37       |  —    |  —     |
+| int8 dynamic     | 1164      | 30.36       | 1.95× | +10.00 |
+```
+
+Honest caveat: naive **dynamic INT8 is a quick, portable baseline** — but it costs real
+quality on capable LLMs (note the perplexity jump). That's why weight-only, calibrated
+methods (GPTQ / AWQ) exist, and why the auto-picker recommends `llm-compressor` or
+`NVIDIA ModelOpt` (not native dynamic) for LLMs.
+
 Caveats worth knowing:
 - Pruning zeros weights but dense `.pt`/`.onnx` storage does not shrink from zeros
   alone — pair pruning with quantization or a sparse format to save space.
