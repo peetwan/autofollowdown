@@ -193,6 +193,19 @@ AWQ, SparseGPT, LLMCBench, LeanQuant, NVIDIA MINITRON and Apple LLM-KICK papers:
 | Multilingual | `mmlu_prox_{lang}` / `mmlu_prox_lite_{lang}` (29 languages) | cross-lingual reasoning |
 | Reasoning | `gsm8k` | math word problems |
 | Truthfulness | `truthfulqa` | reliability |
+| Multimodal (VLMs) | `mmmu_val` / `mmmu_pro` | image+text college-level reasoning |
+
+`MMMU` evaluates **vision-language models** (e.g. Qwen-VL, LLaVA) on 11.5K college-level
+image+text questions across 30 subjects (accuracy). Compress a VLM with autofollowdown,
+then evaluate it on MMMU via the multimodal harness — `multimodal_eval_command()` builds
+the CLI for EleutherAI `lm-eval` (`--model hf-multimodal`) or `lmms-eval`:
+
+```python
+from autofollowdown import multimodal_eval_command, mmmu_tasks
+print(multimodal_eval_command("Qwen/Qwen2-VL-2B-Instruct", tasks=mmmu_tasks()))
+# lm_eval --model hf-multimodal --model_args pretrained=...,max_images=1,interleave=True \
+#   --tasks mmmu_val --apply_chat_template --device cuda:0 --batch_size auto
+```
 
 `MMLU-ProX` (EMNLP 2025) extends MMLU-Pro to 29 languages with parallel questions
 — a strong "beyond perplexity" check, since compression can hurt reasoning and

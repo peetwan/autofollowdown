@@ -34,6 +34,7 @@ STANDARD_LLM_TASKS = {
     "multilingual": ["mmlu_prox_en", "mmlu_prox_lite_en"],  # MMLU-ProX (29 langs)
     "reasoning": ["gsm8k"],                             # math word problems
     "truthfulness": ["truthfulqa_mc2"],                # reliability
+    "multimodal": ["mmmu_val", "mmmu_pro"],            # image+text (VLMs) — accuracy
 }
 
 # MMLU-ProX (EMNLP 2025) — a multilingual, reasoning-focused extension of MMLU-Pro
@@ -59,6 +60,53 @@ def mmlu_prox_tasks(langs=("en",), lite=True):
                          f"Choose from {MMLU_PROX_LANGS}")
     prefix = "mmlu_prox_lite_" if lite else "mmlu_prox_"
     return [f"{prefix}{l}" for l in langs]
+
+
+# MMMU (Massive Multi-discipline Multimodal Understanding) — a multimodal
+# (image+text) benchmark of ~11.5K college-level questions across 6 disciplines /
+# 30 subjects, scored by accuracy. It evaluates vision-language models (e.g.
+# Qwen-VL, LLaVA), so use it to check whether compression hurt a *VLM's* reasoning.
+MMMU_DISCIPLINES = [
+    "art_and_design", "business", "science",
+    "health_and_medicine", "humanities_and_social_science", "tech_and_engineering",
+]
+
+
+def mmmu_tasks(disciplines=None, split="val"):
+    """Build MMMU task ids. `split` in {'val', 'pro'} ('pro' = the harder MMMU-Pro).
+
+    With no disciplines, returns the overall task (`mmmu_val`); otherwise the
+    per-discipline groups (`mmmu_val_science`, ...).
+    """
+    base = "mmmu_pro" if split == "pro" else "mmmu_val"
+    if not disciplines:
+        return [base]
+    bad = [d for d in disciplines if d not in MMMU_DISCIPLINES]
+    if bad:
+        raise ValueError(f"Unknown MMMU discipline(s): {bad}. Choose from {MMMU_DISCIPLINES}")
+    return [f"{base}_{d}" for d in disciplines]
+
+
+def multimodal_eval_command(model_path, tasks=None, harness="lm-eval",
+                            device="cuda:0", batch_size="auto"):
+    """Build the CLI to evaluate a vision-language model on MMMU (and other
+    multimodal tasks). Two supported harnesses:
+
+      - 'lm-eval'   : EleutherAI lm-evaluation-harness >= 0.4.5 (model `hf-multimodal`)
+      - 'lmms-eval' : EvolvingLMMs-Lab lmms-eval (the dedicated multimodal harness)
+
+    Use after compressing a VLM (e.g. Qwen-VL) with autofollowdown.
+    """
+    tasks = tasks or ["mmmu_val"]
+    joined = ",".join(tasks)
+    if harness == "lmms-eval":
+        return (f"python -m lmms_eval --model hf --model_args pretrained={model_path} "
+                f"--tasks {joined} --batch_size 1")
+    # EleutherAI lm-eval multimodal path
+    return (f"lm_eval --model hf-multimodal "
+            f"--model_args pretrained={model_path},max_images=1,interleave=True "
+            f"--tasks {joined} --apply_chat_template --device {device} "
+            f"--batch_size {batch_size}")
 
 
 # A sensible default subset that runs reasonably fast yet is widely reported.

@@ -34,6 +34,26 @@ def test_mmlu_prox_rejects_unknown_language():
         mmlu_prox_tasks(["klingon"])
 
 
+# ----------------------------------------------------------------- MMMU (multimodal)
+def test_mmmu_in_catalog():
+    assert "mmmu_val" in STANDARD_LLM_TASKS["multimodal"]
+
+
+def test_mmmu_tasks_and_command():
+    from autofollowdown import mmmu_tasks, multimodal_eval_command
+
+    assert mmmu_tasks() == ["mmmu_val"]
+    assert mmmu_tasks(split="pro") == ["mmmu_pro"]
+    assert mmmu_tasks(["science", "business"]) == ["mmmu_val_science", "mmmu_val_business"]
+    with pytest.raises(ValueError):
+        mmmu_tasks(["not_a_subject"])
+
+    cmd = multimodal_eval_command("Qwen/Qwen2-VL-2B-Instruct")
+    assert "hf-multimodal" in cmd and "mmmu_val" in cmd and "apply_chat_template" in cmd
+    lmms = multimodal_eval_command("Qwen/Qwen2-VL-2B-Instruct", harness="lmms-eval")
+    assert lmms.startswith("python -m lmms_eval") and "mmmu_val" in lmms
+
+
 # -------------------------------------------------------------- best picks
 class _Net(nn.Module):
     def __init__(self):

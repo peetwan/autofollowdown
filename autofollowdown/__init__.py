@@ -6,11 +6,14 @@ from .ingestion import load_model
 from .llm_eval import (
     DEFAULT_ZEROSHOT_SUITE,
     MMLU_PROX_LANGS,
+    MMMU_DISCIPLINES,
     STANDARD_LLM_TASKS,
     evaluate_perplexity,
     lm_eval_command,
     load_wikitext2,
     mmlu_prox_tasks,
+    mmmu_tasks,
+    multimodal_eval_command,
     perplexity_from_ids,
 )
 from .pipeline import CompressionStudy, compress_and_benchmark
@@ -51,9 +54,12 @@ __all__ = [
     "load_wikitext2",
     "lm_eval_command",
     "mmlu_prox_tasks",
+    "mmmu_tasks",
+    "multimodal_eval_command",
     "STANDARD_LLM_TASKS",
     "DEFAULT_ZEROSHOT_SUITE",
     "MMLU_PROX_LANGS",
+    "MMMU_DISCIPLINES",
     "load_model",
     "count_parameters",
     "evaluate_accuracy",
