@@ -3,7 +3,7 @@
 [![tests](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml/badge.svg)](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.3.0-blueviolet)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.0-blueviolet)](CHANGELOG.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 A unified, simple toolkit for compressing AI models — `quantization`, `pruning`,
@@ -45,17 +45,26 @@ If it won't fit even at 4-bit, it says so honestly and points you to distillatio
 free-GPU offloading. Not sure which technique in general? `autofollowdown advise <model>
 --goal {size,speed,accuracy,ease}` recommends quantize vs prune vs distill, and why.
 
-## One command does it all
+## Auto-first: just give it a model
 
-Compress a model every way, benchmark them side by side, and pick the winner —
-in a single command:
+The whole tool is built around one idea — **give it a model and it does the rest**:
+profile → compress every way → benchmark → pick the best for your goal → save. It only
+stops to ask about the two things it genuinely can't decide for you (what you care
+about, and which variant to keep), and even those auto-default with `--yes` or a pipe.
 
 ```bash
-autofollowdown auto                       # offline demo (trains a digit CNN)
-autofollowdown auto --model facebook/opt-125m --output small.pt
+autofollowdown facebook/opt-125m                      # ⭐ just a model → full auto
+autofollowdown facebook/opt-125m -o small.pt --yes    # unattended: pick best + save
+autofollowdown compress --goal size                   # you set the goal; it auto-picks the smallest
+autofollowdown compress --min-retention 0.98          # auto-pick the smallest that keeps ≥98% accuracy
+autofollowdown auto                                   # offline demo (trains a digit CNN)
 ```
 
 ```
+🤖 autofollowdown autopilot
+   target : facebook/opt-125m
+   goal   : balanced   (override with --goal)
+
 ┌───────────────────────────────┬─────────┬──────────┬────────┬───────┬───────┬────────┐
 │ Model                         │ Size MB │ Sparsity │   Acc  │ Size× │ Speed×│  ΔAcc  │
 ├───────────────────────────────┼─────────┼──────────┼────────┼───────┼───────┼────────┤
@@ -66,12 +75,13 @@ autofollowdown auto --model facebook/opt-125m --output small.pt
 │ distilled student (1/4 width) │   0.293 │     0.0% │ 74.4%  │ 3.67× │ 5.39× │ -16.0% │
 └───────────────────────────────┴─────────┴──────────┴────────┴───────┴───────┴────────┘
 
-➤ Recommended: prune+quantize (3.56× smaller, 91.6% acc)
-Pick a method to keep:  [1-5, default 4]:
+🤖 auto: kept 'prune+quantize' for goal 'balanced'
+➤ Selected: prune+quantize
 ```
 
-It prompts you to choose (or pass `--method 'prune+quantize' --output model.pt`,
-or `--yes` to take the recommendation). Same flow in Python:
+At a terminal it offers a quick menu for the goal and the variant (Enter = the
+recommendation); with `--yes`, a pipe, or `--goal`/`--method`/`--max-size-mb` set it
+runs fully unattended. Same flow in Python:
 
 ```python
 from autofollowdown import compress_and_benchmark
@@ -492,13 +502,15 @@ flowchart TD
    `lm_eval_command()` / `multimodal_eval_command()` build the exact harness commands to run
    the full accuracy suite (ARC, MMLU, MMLU-ProX, GSM8K, MMMU, …).
 
-### Three ways to drive it (same engine underneath)
+### Ways to drive it (auto-first, same engine underneath)
 
 | Entry point | What it does | Use when |
 |-------------|--------------|----------|
+| `autofollowdown <model>` / `autopilot(model)` | **auto**: profile → compress → benchmark → pick → save; asks only what it can't decide | the default — just hand it a model |
+| `autofollowdown diagnose` / `advise` | symptom-first / which-technique guidance | you're stuck or unsure where to start |
+| `compress_and_benchmark(m)` | runs all methods, benchmarks, recommends, lets you pick | you want the study object in Python |
+| `recommend(m)` / `auto_compress(m)` / `compress_with(m, "nni")` | profiles the model and routes to the best *library* | you want the strongest method your hardware allows |
 | `ModelCompressor(m).prune().quantize().export()` | manual, chained control | you know exactly what you want |
-| `compress_and_benchmark(m)` / `autofollowdown auto` | runs all methods, benchmarks, recommends, lets you pick | you want the best variant chosen for you |
-| `recommend(m)` / `auto_compress(m)` / `compress_with(m, "nni")` | profiles the model and routes to the best *library* | you want the strongest method available on your hardware |
 
 ### Backend registry (`backends.py`)
 
@@ -527,6 +539,7 @@ enable it.
 ```
 autofollowdown/
   api.py            # ModelCompressor — the unified compression API
+  flow.py           # autopilot(): the auto-first orchestrator + choose() (auto/menu)
   pipeline.py       # compress_and_benchmark() + CompressionStudy (the one-command flow)
   auto.py           # auto-picker: recommend() / explain() / auto_compress()
   advisor.py        # advise(): which technique (quantize/prune/distill) + backend, and why
@@ -572,7 +585,7 @@ store). One-time setup: on PyPI → your project → *Publishing*, add a trusted
 Then:
 
 ```bash
-git tag v0.3.0 && git push --tags      # or click "Draft a new release" on GitHub
+git tag v0.4.0 && git push --tags      # or click "Draft a new release" on GitHub
 ```
 
 Manual:

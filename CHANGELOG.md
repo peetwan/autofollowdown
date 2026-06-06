@@ -4,6 +4,24 @@ All notable changes to autofollowdown are documented here. The format is based o
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-07
+
+### Changed — auto-first flow redesign
+- **`autofollowdown <model>` just works.** A bare model id / `.pt` path (no
+  subcommand) now runs the full auto flow — profile → compress every way →
+  benchmark → auto-pick the best for your goal → save.
+- **New `flow.autopilot()` orchestrator** unifies the one-command experience. It is
+  fully automatic and asks only at the two genuine decision points — your *goal*
+  (size/speed/accuracy/ease/balanced) and which *variant* to keep — and only when a
+  human is at a TTY. `--yes`, a pipe, or any of `--goal` / `--method` /
+  `--max-size-mb` / `--min-retention` makes it run unattended.
+- `compress` / `auto` gained `--goal`, `--max-size-mb`, `--min-retention`; the goal
+  drives the automatic variant pick (size→smallest, speed→fastest, else→recommended),
+  and size/accuracy constraints auto-select the best variant that satisfies them.
+- New `flow.choose()` helper: the reusable "auto by default, menu when it matters"
+  primitive. Bare CLI now advertises the auto-first and "stuck?" entry points.
+- +12 tests (`test_flow.py`); full suite 164 passed.
+
 ## [0.3.0] - 2026-06-07
 
 ### Added
