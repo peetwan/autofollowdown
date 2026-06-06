@@ -1,0 +1,164 @@
+"""Real measurement utilities for benchmarking compressed models.
+
+Every function here measures an actual property of a real model — no mocks,
+no hardcoded numbers. These are the primitives the benchmark engine composes.
+"""
+
+import io
+import time
+
+import torch
+
+
+def count_parameters(model):
+    """Return (total_params, nonzero_params, sparsity_fraction).
+
+    Sparsity is the fraction of weight elements that are exactly zero, which is
+    what (unstructured) pruning produces. Counting nonzeros is the honest way to
+    report pruning — a mask that is never made permanent would show 0 sparsity.
+    """
+    total = 0
+    nonzero = 0
+    for p in model.parameters():
+        n = p.numel()
+        total += n
+        nonzero += int(torch.count_nonzero(p).item())
+    sparsity = 0.0 if total == 0 else 1.0 - (nonzero / total)
+    return total, nonzero, sparsity
+
+
+def model_disk_size_mb(model):
+    """Serialize the model to an in-memory buffer and return its size in MB.
+
+    We serialize rather than estimate, because quantized tensors, buffers, and
+    packed params all change the real on-disk footprint in ways a parameter
+    count cannot capture.
+    """
+    buffer = io.BytesIO()
+    torch.save(model, buffer)
+    return buffer.getbuffer().nbytes / (1024 * 1024)
+
+
+def _forward(model, batch):
+    """Run a forward pass on a batch that may be a tensor, a (x, y) tuple, or a
+    dict of named tensors (Hugging Face style). Returns the raw logits tensor."""
+    if isinstance(batch, dict):
+        out = model(**batch)
+    elif isinstance(batch, (list, tuple)):
+        out = model(batch[0])
+    else:
+        out = model(batch)
+    # Hugging Face models return objects with a .logits attribute
+    if hasattr(out, "logits"):
+        return out.logits
+    if isinstance(out, (list, tuple)):
+        return out[0]
+    return out
+
+
+def measure_latency(model, example_input, n_warmup=5, n_runs=30, device="cpu"):
+    """Return (median_latency_ms, throughput_samples_per_s) for a single forward.
+
+    Warmup runs are discarded so we don't measure lazy-init / cache-cold effects,
+    and we report the median (p50) rather than the mean so a single GC pause or
+    scheduler hiccup does not dominate the number.
+    """
+    model = model.to(device).eval()
+    if isinstance(example_input, torch.Tensor):
+        example_input = example_input.to(device)
+        batch_size = example_input.shape[0]
+    elif isinstance(example_input, dict):
+        example_input = {k: v.to(device) for k, v in example_input.items()}
+        batch_size = next(iter(example_input.values())).shape[0]
+    else:
+        batch_size = 1
+
+    with torch.no_grad():
+        for _ in range(n_warmup):
+            _forward(model, example_input)
+
+        timings = []
+        for _ in range(n_runs):
+            start = time.perf_counter()
+            _forward(model, example_input)
+            timings.append(time.perf_counter() - start)
+
+    timings.sort()
+    median_s = timings[len(timings) // 2]
+    median_ms = median_s * 1000.0
+    throughput = batch_size / median_s if median_s > 0 else float("inf")
+    return median_ms, throughput
+
+
+@torch.no_grad()
+def evaluate_accuracy(model, dataloader, device="cpu"):
+    """Top-1 accuracy over a dataloader yielding (inputs, labels) batches.
+
+    Returns a fraction in [0, 1]. This is the real task-quality signal: it tells
+    you what compression actually cost you.
+    """
+    model = model.to(device).eval()
+    correct = 0
+    total = 0
+    for inputs, labels in dataloader:
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+        logits = _forward(model, inputs)
+        preds = logits.argmax(dim=1)
+        correct += int((preds == labels).sum().item())
+        total += labels.shape[0]
+    return 0.0 if total == 0 else correct / total
+
+
+@torch.no_grad()
+def output_agreement(model, reference_model, dataloader, device="cpu"):
+    """Fraction of samples where `model` and `reference_model` predict the same class.
+
+    This is "fidelity": how faithfully the compressed model mimics the original,
+    independent of ground-truth labels. Useful when you have no labels, or to
+    separate "compression hurt the model" from "the model was always wrong here".
+    """
+    model = model.to(device).eval()
+    reference_model = reference_model.to(device).eval()
+    agree = 0
+    total = 0
+    for batch in dataloader:
+        inputs = batch[0] if isinstance(batch, (list, tuple)) else batch
+        inputs = inputs.to(device)
+        p1 = _forward(model, inputs).argmax(dim=1)
+        p2 = _forward(reference_model, inputs).argmax(dim=1)
+        agree += int((p1 == p2).sum().item())
+        total += inputs.shape[0]
+    return 1.0 if total == 0 else agree / total
+
+
+def measure_model(model, name, example_input, eval_loader=None,
+                  reference_model=None, device="cpu", latency_runs=30):
+    """Measure every available metric for one model and return a flat dict.
+
+    `eval_loader` enables accuracy; `reference_model` enables fidelity. Both are
+    optional so size/latency can be benchmarked even with no labelled data.
+    """
+    total, nonzero, sparsity = count_parameters(model)
+    latency_ms, throughput = measure_latency(
+        model, example_input, n_runs=latency_runs, device=device
+    )
+    result = {
+        "name": name,
+        "params": total,
+        "nonzero_params": nonzero,
+        "sparsity": sparsity,
+        "size_mb": model_disk_size_mb(model),
+        "latency_ms": latency_ms,
+        "throughput": throughput,
+        "accuracy": None,
+        "fidelity": None,
+    }
+    if eval_loader is not None:
+        result["accuracy"] = evaluate_accuracy(model, eval_loader, device=device)
+    # Fidelity needs both a reference model and data to run it on.
+    if reference_model is not None and eval_loader is not None:
+        result["fidelity"] = output_agreement(
+            model, reference_model, eval_loader, device=device
+        )
+    return result

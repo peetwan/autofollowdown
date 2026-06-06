@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autofollowdown"
+version = "0.1.0"
+description = "A unified, simple toolkit for quantizing, pruning, and distilling AI models — with a real benchmark."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Peet" }]
+keywords = ["quantization", "pruning", "distillation", "model-compression", "onnx", "pytorch"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.1",
+    "onnx>=1.15",
+    "onnxruntime>=1.16",
+    "numpy>=1.24",
+    "transformers>=4.30",
+]
+
+[project.optional-dependencies]
+examples = ["scikit-learn>=1.2", "datasets>=2.0"]
+llm-eval = ["lm-eval>=0.4", "datasets>=2.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+autofollowdown = "autofollowdown.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/peetwan/autofollowdown"
+Issues = "https://github.com/peetwan/autofollowdown/issues"
+
+[tool.setuptools.packages.find]
+include = ["autofollowdown*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

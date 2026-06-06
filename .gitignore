@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.venv/
+venv/
+
+# Agent / orchestration scratch
+.agents/
+
+# Personal dev logs (kept locally, not part of the public repo)
+working_logs/
+
+# Model & runtime artifacts (do not commit weights or temp graphs)
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.data
+benchmark_report.json
+temp_hf/
+sym_shape_infer_temp.onnx
+
+# OS
+.DS_Store
