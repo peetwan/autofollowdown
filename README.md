@@ -82,8 +82,10 @@ onnxscript, transformers, numpy) install automatically. See [Publishing](#publis
   walkthrough of everything, with outputs you can see right on GitHub (core API,
   one-command flow, auto-picker, benchmarks, MMMU/MMLU-ProX, and Qwen quant/prune/distill).
 - [`notebooks/autofollowdown_backends_colab.ipynb`](notebooks/autofollowdown_backends_colab.ipynb)
-  — installs and **runs the connected backends on a GPU** (NNI structured pruning,
-  llm-compressor 4-bit GPTQ on Qwen, NVIDIA ModelOpt INT8 SmoothQuant). Built for a Colab T4:
+  — the **full backend flow with real results**: profile → `recommend` (why) → run every
+  backend via `compress_with` → side-by-side comparison. An LLM library shoot-out on Qwen
+  (native INT8 vs llm-compressor 4-bit GPTQ vs NVIDIA ModelOpt INT8, scored on WikiText-2
+  perplexity) plus a vision track (native vs NNI structured pruning). Built for a Colab T4:
 
   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/peetwan/autofollowdown/blob/main/notebooks/autofollowdown_backends_colab.ipynb)
 
