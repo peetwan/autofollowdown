@@ -2,8 +2,10 @@
 
 After `pip install autofollowdown`, run everything without touching the source:
 
+    autofollowdown diagnose Qwen/Qwen3-0.6B --problem won't-fit --vram 8   # 🩺 stuck? start here
     autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ the easy one
     autofollowdown compress                                 # offline demo (no model needed)
+    autofollowdown advise Qwen/Qwen3-0.6B --goal size       # which technique(s) to use + why
     autofollowdown recommend Qwen/Qwen3-0.6B --goal accuracy  # best library for your LLM + why
     autofollowdown gpu Qwen/Qwen3-0.6B                      # GPU + memory-saving plan (free-GPU friendly)
     autofollowdown info                                     # version, backends, catalog
@@ -136,6 +138,52 @@ def _recommend_benchmark(model, profile, max_chars):
           "calibrated ModelOpt over native dynamic INT8.")
 
 
+def _cmd_diagnose(args):
+    """Symptom-first help: 'I can't run this model'. Tell it the problem + your
+    hardware and it says exactly what to do, with a fit table and the next command."""
+    from .diagnose import DEVICE_PRESETS, PROBLEMS, diagnose
+
+    if args.list_devices:
+        print(color("Device presets:", "bold"))
+        for k, (gb, label) in DEVICE_PRESETS.items():
+            print(f"  {k:18} {label}")
+        return
+
+    if not args.model:
+        print(color("Stuck? Tell me the model and your problem:", "bold", "cyan"))
+        print("  autofollowdown diagnose Qwen/Qwen3-0.6B --problem won't-fit --vram 8")
+        print("  autofollowdown diagnose meta-llama/Llama-3.1-8B --device raspberry-pi-5")
+        print("  autofollowdown diagnose <model> --problem too-slow")
+        print(f"\nProblems: {', '.join(repr(p) for p in PROBLEMS)}")
+        print("Devices : autofollowdown diagnose --list-devices")
+        return
+
+    d = diagnose(args.model, problem=args.problem, vram_gb=args.vram,
+                 device=args.device, can_retrain=args.can_retrain,
+                 target_size_mb=args.target_size_mb)
+    print(color(f"\nModel: {args.model}\n", "bold", "cyan"))
+    print(d.to_text(color=color))
+
+
+def _cmd_advise(args):
+    """Recommend WHICH technique(s) + backend to use for a model, and why — the
+    'where do I even start: quantize, prune, or distill?' decision, in one place."""
+    from .advisor import advise
+
+    if args.model.endswith((".pt", ".pth")):
+        print(f"Profiling {args.model} ...")
+    else:
+        print(f"Reading config for {args.model} (no weights downloaded) ...")
+    plan = advise(args.model, goal=args.goal,
+                  max_size_ratio=args.max_size_ratio,
+                  min_accuracy_retention=args.min_retention,
+                  can_retrain=args.can_retrain,
+                  hardware=args.hardware)
+    print(color(f"\nModel: {args.model}", "bold", "cyan")
+          + f"  (family={plan.family}, goal={plan.goal})\n")
+    print(plan.to_text(color=color))
+
+
 def _cmd_gpu(args):
     """Show the current GPU and the memory-saving plan for a given model — the
     settings that let the heavy backends run on a free/small GPU."""
@@ -256,6 +304,43 @@ def build_parser():
     r.add_argument("--max-chars", type=int, default=3000, help="eval text length for --benchmark")
     r.set_defaults(func=_cmd_recommend)
 
+    dg = sub.add_parser(
+        "diagnose",
+        help="START HERE if you're stuck: \"I can't run this model\" → exactly what to do")
+    dg.add_argument("model", nargs="?", default=None,
+                    help="Hugging Face model id (config only) or .pt path")
+    dg.add_argument("--problem", default="won't-fit",
+                    choices=["won't-fit", "oom", "too-slow", "too-big", "edge", "cost"],
+                    help="what's going wrong")
+    dg.add_argument("--vram", type=float, default=None,
+                    help="how much memory you have, in GB (e.g. 8)")
+    dg.add_argument("--device", default=None,
+                    help="target preset, e.g. raspberry-pi-5 / gpu-8gb / phone "
+                         "(see --list-devices)")
+    dg.add_argument("--target-size-mb", type=float, default=None,
+                    help="size budget in MB (for --problem too-big)")
+    dg.add_argument("--can-retrain", action="store_true",
+                    help="allow distillation / pruning fine-tune")
+    dg.add_argument("--list-devices", action="store_true", help="list device presets and exit")
+    dg.set_defaults(func=_cmd_diagnose)
+
+    ad = sub.add_parser(
+        "advise",
+        help="recommend WHICH technique (quantize/prune/distill) + backend to use, and why")
+    ad.add_argument("model", help="Hugging Face model id (config only) or .pt path")
+    ad.add_argument("--goal", default="balanced",
+                    choices=["balanced", "accuracy", "size", "speed", "ease"],
+                    help="what you care about most")
+    ad.add_argument("--max-size-ratio", type=float, default=None,
+                    help="target fraction of original size (e.g. 0.25 = 4x smaller)")
+    ad.add_argument("--min-retention", type=float, default=None,
+                    help="accuracy floor as a fraction of baseline (e.g. 0.98)")
+    ad.add_argument("--can-retrain", action="store_true",
+                    help="allow techniques that need training (pruning fine-tune, distillation)")
+    ad.add_argument("--hardware", default=None, choices=["cpu", "gpu"],
+                    help="target hardware (default: auto-detect)")
+    ad.set_defaults(func=_cmd_advise)
+
     g = sub.add_parser(
         "gpu",
         help="show your GPU + the memory-saving plan that runs a model on a free/small GPU")
@@ -288,6 +373,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()
+        print(color("\n🩺 Stuck? Start with:  ", "bold", "cyan")
+              + "autofollowdown diagnose <model> --problem won't-fit --vram 8")
         return
     try:
         args.func(args)

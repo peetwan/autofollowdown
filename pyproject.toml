@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autofollowdown"
-version = "0.2.0"
+version = "0.3.0"
 description = "A unified, simple toolkit for quantizing, pruning, and distilling AI models — with a real benchmark."
 readme = "README.md"
 requires-python = ">=3.9"

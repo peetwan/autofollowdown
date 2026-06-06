@@ -94,6 +94,98 @@ class Benchmark:
         return {"recommended": recommended, "smallest": smallest,
                 "fastest": fastest, "most_accurate": most_accurate}
 
+    # ----------------------------------------------- constraint-aware decisions
+    def _quality(self, r):
+        """The quality signal to trade off against size: accuracy, else fidelity."""
+        if r.get("accuracy") is not None:
+            return r["accuracy"]
+        return r.get("fidelity")
+
+    def pareto_frontier(self):
+        """Names of variants on the size↔quality Pareto frontier — the only ones
+        worth considering, because every other variant is both bigger AND less
+        accurate than one of these. (Smaller size + higher quality = better.)"""
+        names = []
+        for r in self.results:
+            q, s = self._quality(r), r["size_mb"]
+            dominated = False
+            for other in self.results:
+                if other is r:
+                    continue
+                oq, os_ = self._quality(other), other["size_mb"]
+                better_or_equal = os_ <= s and (oq is None or q is None or oq >= q)
+                strictly_better = os_ < s or (oq is not None and q is not None and oq > q)
+                if better_or_equal and strictly_better:
+                    dominated = True
+                    break
+            if not dominated:
+                names.append(r["name"])
+        return names
+
+    def pick_best(self, max_size_mb=None, min_accuracy=None, min_retention=None,
+                  prefer="recommended"):
+        """Pick the best variant that satisfies hard constraints — the decision the
+        benchmark exists to support.
+
+        Constraints: `max_size_mb` (size budget), `min_accuracy` (absolute floor),
+        `min_retention` (fraction of the baseline's accuracy to keep, e.g. 0.98).
+        Among the variants that pass, `prefer` chooses: 'smallest' / 'fastest' /
+        'most_accurate' / 'recommended' (best size-quality score).
+
+        Returns {row, meets, note}. If nothing meets the constraints, returns the
+        closest passing-most-constraints variant with meets=False and a note.
+        """
+        base = self._baseline()
+        if not base:
+            return {"row": None, "meets": False, "note": "no baseline measured"}
+
+        def passes(r):
+            if max_size_mb is not None and r["size_mb"] > max_size_mb:
+                return False
+            acc = r.get("accuracy")
+            if min_accuracy is not None and (acc is None or acc < min_accuracy):
+                return False
+            if min_retention is not None and base.get("accuracy"):
+                if acc is None or acc / base["accuracy"] < min_retention:
+                    return False
+            return True
+
+        candidates = [r for r in self.results if passes(r)]
+        if candidates:
+            chooser = {
+                "smallest": lambda rs: min(rs, key=lambda r: r["size_mb"]),
+                "fastest": lambda rs: min(rs, key=lambda r: r["latency_ms"]),
+                "most_accurate": lambda rs: max(
+                    rs, key=lambda r: (r.get("accuracy") or 0)),
+            }.get(prefer)
+            if chooser:
+                row = chooser(candidates)
+            else:  # 'recommended' → reuse the size-quality score, restricted to passers
+                names = {r["name"] for r in candidates}
+                picks = self.best_picks()
+                rec = picks.get("recommended")
+                row = rec if rec and rec["name"] in names else min(
+                    candidates, key=lambda r: r["size_mb"])
+            return {"row": row, "meets": True,
+                    "note": f"{row['name']} meets your constraints"}
+
+        # Nothing passes — return the closest (fewest constraint violations, then smallest).
+        def violations(r):
+            v = 0
+            if max_size_mb is not None and r["size_mb"] > max_size_mb:
+                v += 1
+            acc = r.get("accuracy")
+            if min_accuracy is not None and (acc is None or acc < min_accuracy):
+                v += 1
+            if min_retention is not None and base.get("accuracy") and (
+                    acc is None or acc / base["accuracy"] < min_retention):
+                v += 1
+            return v
+
+        closest = min(self.results, key=lambda r: (violations(r), r["size_mb"]))
+        return {"row": closest, "meets": False,
+                "note": f"nothing meets all constraints; closest is {closest['name']}"}
+
     # ---------------------------------------------------------------- rendering
     def to_table(self):
         """Pretty, aligned terminal table with the recommended row highlighted."""

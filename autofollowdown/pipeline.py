@@ -78,6 +78,23 @@ class CompressionStudy:
         """Return the recommended compressed model."""
         return self.pick(self.recommended)
 
+    def pick_best(self, max_size_mb=None, min_accuracy=None, min_retention=None,
+                  prefer="recommended"):
+        """Pick the best variant meeting hard constraints (size budget / accuracy
+        floor). Returns (name, model, info); info.meets says whether it satisfied
+        them. e.g. study.pick_best(min_retention=0.98) → smallest near-lossless one."""
+        info = self._bench.pick_best(max_size_mb=max_size_mb, min_accuracy=min_accuracy,
+                                     min_retention=min_retention, prefer=prefer)
+        row = info.get("row")
+        name = row["name"] if row else None
+        model = self.pick(name) if name in self.models else None
+        return name, model, info
+
+    def frontier(self):
+        """Names of variants on the size↔quality Pareto frontier (the rest are
+        dominated — bigger *and* less accurate than one of these)."""
+        return self._bench.pareto_frontier()
+
     def report(self):
         return self._bench.report()
 

@@ -3,7 +3,7 @@
 [![tests](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml/badge.svg)](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.2.0-blueviolet)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.3.0-blueviolet)](CHANGELOG.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 A unified, simple toolkit for compressing AI models — `quantization`, `pruning`,
@@ -12,6 +12,38 @@ measures the actual impact on size, latency, and accuracy.
 
 No mocks. Every operation changes real weights, and every metric is measured from
 a real model running on real data.
+
+## 🩺 Stuck? "I can't run this model"
+
+Don't know quantization from distillation? Start from your *problem*. Tell
+`diagnose` what's wrong and your hardware — it says exactly what to do, whether it
+will fit, and the next command to run:
+
+```bash
+autofollowdown diagnose meta-llama/Llama-3.1-8B --problem won't-fit --vram 8
+autofollowdown diagnose Qwen/Qwen3-0.6B --device raspberry-pi-5      # or --device phone / gpu-8gb
+autofollowdown diagnose my_model.pt --problem too-slow
+```
+
+```
+Your problem: it won't fit / runs out of memory
+Model ~8000M params; target: your 8 GB target
+
+Will it fit?
+  fp16  needs ~ 20.2 GB   ✗ too big
+  int8  needs ~ 10.6 GB   ✗ too big
+  int4  needs ~  5.8 GB   ✓ fits
+
+→ Only 4-bit fits (~5.8 GB ≤ 8.0 GB). Quantize to INT4 (GPTQ/AWQ) — ~4× smaller.
+Do this: INT4 weight-only quantization (GPTQ/AWQ)  (best library: llm-compressor)
+Run next:
+  $ autofollowdown gpu meta-llama/Llama-3.1-8B
+  $ autofollowdown compress meta-llama/Llama-3.1-8B -o small.pt
+```
+
+If it won't fit even at 4-bit, it says so honestly and points you to distillation or
+free-GPU offloading. Not sure which technique in general? `autofollowdown advise <model>
+--goal {size,speed,accuracy,ease}` recommends quantize vs prune vs distill, and why.
 
 ## One command does it all
 
@@ -105,6 +137,8 @@ onnx, onnxruntime, onnxscript, transformers, numpy) install automatically.
 ### Try it in one command
 
 ```bash
+autofollowdown diagnose <model> --problem won't-fit --vram 8   # 🩺 stuck? start here
+autofollowdown advise <model> --goal size               # which technique(s) to use + why
 autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ compress, benchmark, pick, save
 autofollowdown compress                                 # offline demo (no model needed)
 autofollowdown recommend Qwen/Qwen3-0.6B --goal accuracy   # best library for your LLM (+ why)
@@ -495,6 +529,8 @@ autofollowdown/
   api.py            # ModelCompressor — the unified compression API
   pipeline.py       # compress_and_benchmark() + CompressionStudy (the one-command flow)
   auto.py           # auto-picker: recommend() / explain() / auto_compress()
+  advisor.py        # advise(): which technique (quantize/prune/distill) + backend, and why
+  diagnose.py       # diagnose(): symptom-first help ("I can't run this model") + fit table
   gpu.py            # GPU memory planner — sequential onloading so LLMs run on a free GPU
   backends.py       # backend registry (native + NNI + llm-compressor + ModelOpt)
   profiler.py       # model profiling (family / size / hardware)
@@ -536,7 +572,7 @@ store). One-time setup: on PyPI → your project → *Publishing*, add a trusted
 Then:
 
 ```bash
-git tag v0.2.0 && git push --tags      # or click "Draft a new release" on GitHub
+git tag v0.3.0 && git push --tags      # or click "Draft a new release" on GitHub
 ```
 
 Manual:

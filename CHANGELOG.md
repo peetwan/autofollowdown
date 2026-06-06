@@ -4,6 +4,26 @@ All notable changes to autofollowdown are documented here. The format is based o
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-07
+
+### Added
+- **`diagnose` — symptom-first help.** Start from your *problem*, not the jargon:
+  `autofollowdown diagnose <model> --problem won't-fit --vram 8` (or
+  `--device raspberry-pi-5 / phone / gpu-8gb`). It estimates whether the model fits
+  at fp16/int8/int4, gives a plain verdict, the recommended plan, and the exact next
+  command — and honestly says "distill or offload" when it won't fit even at 4-bit.
+  Device presets for Raspberry Pi / Jetson / phone / microcontroller / GPU tiers.
+- **`advise` — a compression advisor.** Recommends *which* technique(s) (quantize /
+  prune / distill) + backend to use for a model and why, in the right order, with
+  caveats — driven by a declarative `TECHNIQUES` knowledge base. Honors `--goal`,
+  `--max-size-ratio`, `--min-retention`, `--can-retrain`, `--hardware`.
+- **Constraint-aware decisions on the benchmark**: `CompressionStudy.pick_best(
+  max_size_mb=…, min_accuracy=…, min_retention=…)` returns the best variant meeting
+  hard limits (or the closest), and `.frontier()` / `Benchmark.pareto_frontier()`
+  flag the non-dominated variants on the size↔quality trade-off.
+- The bare CLI and `diagnose` with no model now point newcomers at the "stuck? start
+  here" flow. +25 tests (advisor + diagnose); full suite 152 passed.
+
 ## [0.2.0] - 2026-06-07
 
 ### Added
