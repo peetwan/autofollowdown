@@ -78,6 +78,10 @@ onnxscript, transformers, numpy) install automatically. See [Publishing](#publis
 
 ### 📓 Notebooks
 
+- [`notebooks/autofollowdown_cpu_demo.ipynb`](notebooks/autofollowdown_cpu_demo.ipynb) —
+  **runs entirely on CPU in ~1–2 min, no GPU.** Real results (with outputs on GitHub): the
+  three techniques on a CNN, the one-command benchmark, the auto-picker, and a real
+  OPT-125M WikiText-2 perplexity check. The quickest way to see it work.
 - [`notebooks/autofollowdown_demo.ipynb`](notebooks/autofollowdown_demo.ipynb) — runnable
   walkthrough of everything, with outputs you can see right on GitHub (core API,
   one-command flow, auto-picker, benchmarks, MMMU/MMLU-ProX, and Qwen quant/prune/distill).
@@ -452,6 +456,7 @@ examples/
   benchmark_llm.py      # real LLM perplexity benchmark (WikiText-2)
   autopick_demo.py      # auto-pick the best backend per model
 notebooks/
+  autofollowdown_cpu_demo.ipynb        # CPU-only demo, real outputs, ~1–2 min (no GPU)
   autofollowdown_demo.ipynb            # runnable walkthrough of the whole toolkit
   autofollowdown_backends_colab.ipynb  # Colab T4: install + run NNI / llm-compressor / ModelOpt
 tests/              # real tests (assert actual effects, not flags)
