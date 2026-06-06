@@ -79,9 +79,10 @@ onnxscript, transformers, numpy) install automatically. See [Publishing](#publis
 ### 📓 Notebooks
 
 - [`notebooks/autofollowdown_cpu_demo.ipynb`](notebooks/autofollowdown_cpu_demo.ipynb) —
-  **runs entirely on CPU in ~1–2 min, no GPU.** Real results (with outputs on GitHub): the
-  three techniques on a CNN, the one-command benchmark, the auto-picker, and a real
-  OPT-125M WikiText-2 perplexity check. The quickest way to see it work.
+  **runs entirely on CPU in ~2–3 min, no GPU.** Real results (outputs on GitHub): the three
+  techniques on a CNN, the one-command benchmark, the auto-picker, and an OPT-125M
+  **method comparison** on WikiText-2 perplexity (baseline vs INT8 vs pruning vs pruned+INT8 —
+  so you can see it really compares methods, not just one). The quickest way to see it work.
 - [`notebooks/autofollowdown_demo.ipynb`](notebooks/autofollowdown_demo.ipynb) — runnable
   walkthrough of everything, with outputs you can see right on GitHub (core API,
   one-command flow, auto-picker, benchmarks, MMMU/MMLU-ProX, and Qwen quant/prune/distill).
