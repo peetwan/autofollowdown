@@ -536,7 +536,7 @@ store). One-time setup: on PyPI → your project → *Publishing*, add a trusted
 Then:
 
 ```bash
-git tag v0.1.0 && git push --tags      # or click "Draft a new release" on GitHub
+git tag v0.2.0 && git push --tags      # or click "Draft a new release" on GitHub
 ```
 
 Manual:
