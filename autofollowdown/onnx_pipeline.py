@@ -268,6 +268,18 @@ def optimize_onnx(onnx_path, output_path, config) -> str:
                 current_path = opt_output_path
                 
         if quantize:
+            # Strip stale intermediate shape annotations (value_info) that a torch
+            # export can leave behind. Newer onnx runs strict shape inference during
+            # quantization and rejects these as conflicting; clearing them lets ORT
+            # re-infer cleanly. Version-agnostic and safe (inputs/outputs untouched).
+            clean_fd, clean_path = tempfile.mkstemp(suffix="_clean.onnx")
+            os.close(clean_fd)
+            temp_files.append(clean_path)
+            _m = onnx.load(current_path)
+            del _m.graph.value_info[:]
+            onnx.save(_m, clean_path)
+            current_path = clean_path
+
             if approach == "dynamic":
                 quantize_dynamic(
                     model_input=current_path,
@@ -288,8 +300,7 @@ def optimize_onnx(onnx_path, output_path, config) -> str:
                     current_path = pre_output_path
                 except Exception:
                     pass
-                    
-                import onnx
+
                 onnx_model = onnx.load(current_path)
                 input_names = [inp.name for inp in onnx_model.graph.input]
                 
