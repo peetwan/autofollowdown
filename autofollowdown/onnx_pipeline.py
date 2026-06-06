@@ -184,6 +184,7 @@ def export_to_onnx(model, format_type, output_path, input_shape=None) -> str:
         dynamic_axes["output"] = {0: "batch_size"}
         
     # Export to ONNX
+    import inspect
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -191,19 +192,23 @@ def export_to_onnx(model, format_type, output_path, input_shape=None) -> str:
             args = tuple(dummy_input.values())
         else:
             args = dummy_input
-            
-        torch.onnx.export(
-            model_obj,
-            args,
-            output_path,
+
+        export_kwargs = dict(
             export_params=True,
             opset_version=14,
             do_constant_folding=True,
             input_names=input_names,
             output_names=output_names,
-            dynamic_axes=dynamic_axes
+            dynamic_axes=dynamic_axes,
         )
-            
+        # On torch>=2.5 the default exporter is dynamo-based (needs onnxscript and
+        # renames I/O). Force the legacy TorchScript exporter when available so
+        # input/output names stay stable across torch versions.
+        if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+            export_kwargs["dynamo"] = False
+
+        torch.onnx.export(model_obj, args, output_path, **export_kwargs)
+
     return output_path
 
 

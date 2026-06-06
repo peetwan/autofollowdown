@@ -20,6 +20,7 @@ dependencies = [
     "torch>=2.1",
     "onnx>=1.15",
     "onnxruntime>=1.16",
+    "onnxscript>=0.1",
     "numpy>=1.24",
     "transformers>=4.30",
 ]
