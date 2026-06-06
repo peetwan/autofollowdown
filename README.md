@@ -61,20 +61,22 @@ ModelCompressor(my_model) \
 
 ## Install
 
-```bash
-pip install autofollowdown                 # core
-pip install "autofollowdown[examples]"     # + scikit-learn/datasets for the demos
-```
-
-Until the first PyPI release is published, install straight from GitHub (same
-package, identical commands afterwards):
+Not on PyPI yet, so install from GitHub (the repo is public):
 
 ```bash
-pip install "git+https://github.com/peetwan/autofollowdown#egg=autofollowdown[examples]"
+pip install "git+https://github.com/peetwan/autofollowdown"                       # core
+pip install "autofollowdown[examples] @ git+https://github.com/peetwan/autofollowdown"   # + demos
 ```
 
-Requires Python `>=3.9`, PyTorch `>=2.1`. All core deps (torch, onnx, onnxruntime,
-onnxscript, transformers, numpy) install automatically. See [Publishing](#publishing-to-pypi).
+In a notebook / Colab, prefix with `!`:
+
+```python
+!pip install "autofollowdown[examples] @ git+https://github.com/peetwan/autofollowdown"
+```
+
+Once it's published to PyPI (see [Publishing](#publishing-to-pypi)), this becomes simply
+`pip install autofollowdown`. Requires Python `>=3.9`, PyTorch `>=2.1`; core deps (torch,
+onnx, onnxruntime, onnxscript, transformers, numpy) install automatically.
 
 ### 📓 Notebooks
 
