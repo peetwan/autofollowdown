@@ -76,11 +76,16 @@ pip install "git+https://github.com/peetwan/autofollowdown#egg=autofollowdown[ex
 Requires Python `>=3.9`, PyTorch `>=2.1`. All core deps (torch, onnx, onnxruntime,
 onnxscript, transformers, numpy) install automatically. See [Publishing](#publishing-to-pypi).
 
-### 📓 Demo notebook
+### 📓 Notebooks
 
-A runnable walkthrough of everything — with outputs you can see right on GitHub — is in
-[`notebooks/autofollowdown_demo.ipynb`](notebooks/autofollowdown_demo.ipynb) (core API,
-one-command flow, auto-picker, benchmarks, and which datasets are used).
+- [`notebooks/autofollowdown_demo.ipynb`](notebooks/autofollowdown_demo.ipynb) — runnable
+  walkthrough of everything, with outputs you can see right on GitHub (core API,
+  one-command flow, auto-picker, benchmarks, MMMU/MMLU-ProX, and Qwen quant/prune/distill).
+- [`notebooks/autofollowdown_backends_colab.ipynb`](notebooks/autofollowdown_backends_colab.ipynb)
+  — installs and **runs the connected backends on a GPU** (NNI structured pruning,
+  llm-compressor 4-bit GPTQ on Qwen, NVIDIA ModelOpt INT8 SmoothQuant). Built for a Colab T4:
+
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/peetwan/autofollowdown/blob/main/notebooks/autofollowdown_backends_colab.ipynb)
 
 ### Try it in one command
 
@@ -414,7 +419,8 @@ examples/
   benchmark_llm.py      # real LLM perplexity benchmark (WikiText-2)
   autopick_demo.py      # auto-pick the best backend per model
 notebooks/
-  autofollowdown_demo.ipynb   # runnable walkthrough of the whole toolkit
+  autofollowdown_demo.ipynb            # runnable walkthrough of the whole toolkit
+  autofollowdown_backends_colab.ipynb  # Colab T4: install + run NNI / llm-compressor / ModelOpt
 tests/              # real tests (assert actual effects, not flags)
 ```
 
