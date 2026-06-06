@@ -303,6 +303,88 @@ compress_with(qwen, "modelopt", calibration_data=calib)         # NVIDIA SmoothQ
 Try it: `python3 examples/autopick_demo.py` — and the demo notebook calls `compress_with`
 on both a CNN and Qwen so you can see each backend's exact invocation.
 
+## How it works (architecture & flow)
+
+autofollowdown is a thin, honest pipeline: **ingest → profile → compress → measure →
+recommend → export**. Everything operates on a real model and every number is measured.
+
+```mermaid
+flowchart TD
+    A["Model: PyTorch nn.Module · HF id · .onnx file"] --> B["ingestion.load_model()"]
+    B --> C["profiler.profile_model() → ModelProfile<br/>(family · #params · has_conv/transformer · CUDA?)"]
+    C --> D{"How do you drive it?"}
+    D -->|"one command"| E["compress_and_benchmark() / autofollowdown auto"]
+    D -->|"step by step"| F["ModelCompressor.prune / quantize / distill"]
+    D -->|"best library"| G["recommend() · auto_compress() · compress_with()"]
+    E --> H
+    F --> H
+    G --> H
+    subgraph H["Compression backends (registry)"]
+      H1["native — torch prune / INT8 / KD (always on)"]
+      H2["NNI — structured pruning + ModelSpeedup"]
+      H3["llm-compressor — GPTQ/AWQ 4-bit (LLMs)"]
+      H4["NVIDIA ModelOpt — PTQ → TensorRT (GPU)"]
+    end
+    H --> I["metrics: size_mb · latency · sparsity · accuracy · fidelity · perplexity"]
+    I --> J["Benchmark / CompressionStudy<br/>before↔after table + ➤ recommended pick"]
+    J --> K["export → .pt / .onnx"]
+    J --> L["LLM/VLM eval commands:<br/>WikiText-2 PPL · lm-eval · lmms-eval<br/>(MMLU · MMLU-ProX · MMMU · …)"]
+```
+
+### The stages
+
+1. **Ingest** (`ingestion.py`) — accepts a PyTorch `nn.Module`, a Hugging Face model id
+   (loaded with the right `AutoModel*` class), or a path to a local `.onnx` file, and
+   normalizes them to one internal representation.
+2. **Profile** (`profiler.py`) — inspects the model and returns a `ModelProfile`: its
+   *family* (`llm` / `transformer` / `cnn` / `mlp`), parameter count, whether it has
+   conv/attention layers, whether it's a Hugging Face model, and whether CUDA is present.
+   This is what lets the toolkit choose sensible defaults automatically.
+3. **Compress** (`api.py` `ModelCompressor`) — applies real operations to the weights:
+   - `prune()` — global L1 magnitude (unstructured) or per-channel L2 (structured) pruning
+     via `torch.nn.utils.prune`, made **permanent** (the mask is folded in, so zeros are real).
+   - `quantize()` — INT8 `dynamic` (portable) or FX `static` PTQ; INT8 on the ONNX graph
+     for `.onnx` inputs. (Picks the right CPU quant engine automatically — fbgemm/qnnpack.)
+   - `distill()` — a real knowledge-distillation training loop. For classifiers it's
+     `KL(soft) + CE(hard)`; for **causal LMs** it switches to token-level soft KD over the
+     vocab, so it works on models like Qwen.
+   - `export()` — real `.pt` (torch) or `.onnx` (runnable under onnxruntime).
+4. **Measure** (`metrics.py`) — for any model: on-disk size (MB, serialized to a temp file so
+   multi-GB LLMs don't blow up RAM), parameter count, true sparsity, p50 latency, throughput;
+   with eval data: top-1 accuracy and output fidelity (agreement with the original); for LMs:
+   sliding-window WikiText-2 perplexity (`llm_eval.py`).
+5. **Recommend** (`benchmark.py` + `pipeline.py`) — `Benchmark` collects before/after rows;
+   `best_picks()` scores variants (accuracy-weighted compression) and marks the **smallest,
+   fastest, most-accurate, and recommended** options; `to_table()` renders the box-drawing
+   terminal table with the recommended row highlighted.
+6. **Export / evaluate** — keep the variant you pick (`study.export(...)`); for LLMs/VLMs,
+   `lm_eval_command()` / `multimodal_eval_command()` build the exact harness commands to run
+   the full accuracy suite (ARC, MMLU, MMLU-ProX, GSM8K, MMMU, …).
+
+### Three ways to drive it (same engine underneath)
+
+| Entry point | What it does | Use when |
+|-------------|--------------|----------|
+| `ModelCompressor(m).prune().quantize().export()` | manual, chained control | you know exactly what you want |
+| `compress_and_benchmark(m)` / `autofollowdown auto` | runs all methods, benchmarks, recommends, lets you pick | you want the best variant chosen for you |
+| `recommend(m)` / `auto_compress(m)` / `compress_with(m, "nni")` | profiles the model and routes to the best *library* | you want the strongest method available on your hardware |
+
+### Backend registry (`backends.py`)
+
+Each backend declares: availability (is the library importable?), hardware fit (`needs_cuda`),
+a fitness `score(profile)`, the `plan` it would run, and a real `compress()` that calls the
+library's documented API. The **native** backend is always available; `NNI`, `llm-compressor`,
+and `NVIDIA ModelOpt` register only when installed. `auto_compress` runs the highest-scoring
+*runnable* backend (falling back to native); `compress_with(model, "alias")` forces a specific
+one — running the real library when present, or telling you exactly how to enable it.
+
+### Data objects you'll see
+
+- `ModelProfile` — the model's family / size / hardware fingerprint.
+- `CompressionStudy` — holds the baseline + every compressed variant, their benchmark, and the
+  pick API (`.recommended`, `.pick(name)`, `.best()`, `.export(...)`, `.show()`).
+- `Recommendation` — one ranked backend (score, runnable?, rationale, install hint).
+
 ## Layout
 
 ```
