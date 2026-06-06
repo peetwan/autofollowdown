@@ -31,8 +31,8 @@ class Recommendation:
                 f"({self.technique}) — {status}")
 
 
-def _build(model):
-    profile = profile_model(model)
+def rank_backends(profile):
+    """Rank every applicable backend for a given ModelProfile (no model needed)."""
     recs = []
     for b in all_backends():
         score = b.score(profile)
@@ -46,7 +46,12 @@ def _build(model):
         ))
     # Rank: prefer what we can run now, then by fitness score.
     recs.sort(key=lambda r: (r.runnable, r.score), reverse=True)
-    return profile, recs
+    return recs
+
+
+def _build(model):
+    profile = profile_model(model)
+    return profile, rank_backends(profile)
 
 
 def recommend(model):
@@ -57,6 +62,12 @@ def recommend(model):
     best that you can run right now".
     """
     return _build(model)
+
+
+def recommend_profile(profile):
+    """Like `recommend`, but for a pre-built ModelProfile (e.g. from a HF config —
+    no weight download). Returns (profile, ranked list[Recommendation])."""
+    return profile, rank_backends(profile)
 
 
 def explain(model):

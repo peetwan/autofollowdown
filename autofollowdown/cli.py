@@ -4,6 +4,7 @@ After `pip install autofollowdown`, run everything without touching the source:
 
     autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ the easy one
     autofollowdown compress                                 # offline demo (no model needed)
+    autofollowdown recommend Qwen/Qwen3-0.6B --goal accuracy  # best library for your LLM + why
     autofollowdown info                                     # version, backends, catalog
     autofollowdown benchmark-vision                         # offline CNN benchmark
     autofollowdown benchmark-llm                            # LLM perplexity benchmark
@@ -44,6 +45,92 @@ def _cmd_auto(args):
         print(f"Saved to {args.output}")
     else:
         print(f"Re-run with  --method '{chosen}' --output model.pt  to save it.")
+
+
+_GOAL_NOTE = {
+    "accuracy": "weight-only 4-bit GPTQ/AWQ (llm-compressor) preserves accuracy best at high "
+                "compression; INT8 (ModelOpt/native) is nearly lossless but larger.",
+    "size": "4-bit weight-only GPTQ/AWQ (llm-compressor) gives the smallest model.",
+    "speed": "INT8 + TensorRT via NVIDIA ModelOpt is fastest on an NVIDIA GPU; "
+             "4-bit (llm-compressor) is fast under vLLM.",
+    "balanced": "INT8 — native dynamic for portability/CPU, or ModelOpt/llm-compressor "
+                "for better quality on a GPU.",
+}
+
+
+def _cmd_recommend(args):
+    """Find the best library for a (user-chosen) model and explain *why*, with
+    optional measured benchmark evidence."""
+    from ._term import render_table
+    from .auto import rank_backends
+    from .profiler import profile_from_pretrained, profile_model
+
+    model = args.model
+    if model.endswith((".pt", ".pth")):
+        import torch
+        profile = profile_model(torch.load(model, weights_only=False))
+    else:
+        print(f"Reading config for {model} (no weights downloaded) ...")
+        profile = profile_from_pretrained(model)
+
+    recs = rank_backends(profile)
+    pcount = f"~{profile.num_params/1e6:.0f}M" + (" (est.)" if profile.detail.get("estimated") else "")
+    print(color(f"\nModel: {model}", "bold", "cyan"))
+    print(f"  family={profile.family} · params={pcount} · "
+          f"HF={profile.is_huggingface} · CUDA={profile.cuda_available}\n")
+
+    rows = []
+    for i, r in enumerate(sorted(recs, key=lambda r: r.score, reverse=True), 1):
+        status = ("runnable here" if r.runnable else
+                  ("installed, needs GPU" if r.available else "not installed"))
+        rows.append([str(i), r.backend, f"{r.score:.2f}", status, r.scheme])
+    print(render_table(["#", "Library", "Fit", "Status", "Method"], rows,
+                       ["right", "left", "right", "left", "left"]))
+
+    print(color("\nWhy each library ranks where it does:", "bold"))
+    for r in sorted(recs, key=lambda r: r.score, reverse=True):
+        hint = "" if r.available else f"   ({r.install_hint})"
+        print(f"  • {r.backend}: {r.rationale}{hint}")
+
+    ideal = max(recs, key=lambda r: r.score)
+    runnable = next((r for r in recs if r.runnable), None)
+    print(color("\n➤ Best library for this model: ", "green", "bold")
+          + f"{ideal.backend} — {ideal.scheme}")
+    if runnable and runnable.backend != ideal.backend:
+        print(f"  Runnable right now: {runnable.backend} — {runnable.scheme} "
+              f"(install {ideal.install_hint} for the best result)")
+    print(f"  For your goal '{args.goal}': {_GOAL_NOTE.get(args.goal, _GOAL_NOTE['balanced'])}")
+
+    if args.benchmark:
+        _recommend_benchmark(model, profile, args.max_chars)
+
+
+def _recommend_benchmark(model, profile, max_chars):
+    """Measured evidence: what the portable native INT8 baseline actually costs on
+    this model — the justification for preferring GPTQ/AWQ/ModelOpt on LLMs."""
+    if not profile.is_huggingface or model.endswith((".pt", ".pth")):
+        print(color("\n(Benchmark evidence supports HF model ids; skipping.)", "yellow"))
+        return
+    import copy
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from .api import ModelCompressor
+    from .llm_eval import evaluate_perplexity, load_wikitext2
+
+    print(color("\nGathering evidence (native INT8 vs fp32 on WikiText-2) ...", "bold"))
+    tok = AutoTokenizer.from_pretrained(model)
+    m = AutoModelForCausalLM.from_pretrained(model, dtype=torch.float32).eval()
+    text = load_wikitext2("test")[:max_chars]
+    base = evaluate_perplexity(m, tok, text, stride=512, max_length=1024)
+    q = ModelCompressor(copy.deepcopy(m)).quantize(approach="dynamic").model
+    qppl = evaluate_perplexity(q, tok, text, stride=512, max_length=1024)
+    print(f"  fp32 perplexity        : {base:.2f}")
+    print(f"  native INT8 perplexity : {qppl:.2f}  ({qppl - base:+.2f})")
+    print(color("→ ", "green") + "the portable native INT8 baseline costs "
+          f"{qppl - base:+.2f} perplexity here — which is exactly why, for LLMs, "
+          "autofollowdown recommends weight-only GPTQ/AWQ (llm-compressor) or "
+          "calibrated ModelOpt over native dynamic INT8.")
 
 
 def _cmd_info(args):
@@ -111,6 +198,18 @@ def build_parser():
     a.add_argument("--yes", action="store_true",
                    help="don't prompt; take the recommended method")
     a.set_defaults(func=_cmd_auto)
+
+    r = sub.add_parser(
+        "recommend",
+        help="find the best library for a model (esp. LLMs) and explain why, with evidence")
+    r.add_argument("model", help="Hugging Face model id (config only) or .pt path")
+    r.add_argument("--goal", default="balanced",
+                   choices=["balanced", "accuracy", "size", "speed"],
+                   help="what you care about most")
+    r.add_argument("--benchmark", action="store_true",
+                   help="download the model and measure native-INT8 vs fp32 perplexity as evidence")
+    r.add_argument("--max-chars", type=int, default=3000, help="eval text length for --benchmark")
+    r.set_defaults(func=_cmd_recommend)
 
     sub.add_parser("info", help="show version, backends, and benchmark catalog"
                    ).set_defaults(func=_cmd_info)

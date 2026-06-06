@@ -90,3 +90,39 @@ def profile_model(model):
         cuda_available=torch.cuda.is_available(),
         detail={"is_causal_lm": _is_causal_lm(model) if has_transformer else False},
     )
+
+
+def profile_from_pretrained(model_id):
+    """Build a ModelProfile from a Hugging Face *config* alone — no weight download.
+
+    Lets `recommend` advise on a model id quickly. Parameter count is estimated from
+    the config (marked approximate); family is read from the architecture name.
+    """
+    from transformers import AutoConfig
+
+    cfg = AutoConfig.from_pretrained(model_id)
+    archs = list(getattr(cfg, "architectures", []) or [])
+    is_causal = any(("CausalLM" in a) or ("LMHeadModel" in a) for a in archs)
+
+    h = getattr(cfg, "hidden_size", None) or getattr(cfg, "n_embd", None) \
+        or getattr(cfg, "dim", None)
+    n_layers = getattr(cfg, "num_hidden_layers", None) or getattr(cfg, "n_layer", None) \
+        or getattr(cfg, "n_layers", None)
+    vocab = getattr(cfg, "vocab_size", None)
+    inter = getattr(cfg, "intermediate_size", None) or (4 * h if h else None)
+
+    num = 0
+    if h and n_layers and vocab:
+        per_layer = 4 * h * h + 3 * h * (inter or 4 * h)   # attn + (SwiGLU-ish) MLP
+        num = vocab * h + n_layers * per_layer
+
+    family = "llm" if (is_causal or (num and num >= 50_000_000)) else "transformer"
+    return ModelProfile(
+        family=family,
+        num_params=int(num),
+        has_conv=False,
+        has_transformer=True,
+        is_huggingface=True,
+        cuda_available=torch.cuda.is_available(),
+        detail={"is_causal_lm": is_causal, "model_id": model_id, "estimated": True},
+    )

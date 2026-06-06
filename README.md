@@ -92,6 +92,7 @@ onnxscript, transformers, numpy) install automatically. See [Publishing](#publis
 ```bash
 autofollowdown compress facebook/opt-125m -o small.pt   # ⭐ compress, benchmark, pick, save
 autofollowdown compress                                 # offline demo (no model needed)
+autofollowdown recommend Qwen/Qwen3-0.6B --goal accuracy   # best library for your LLM (+ why)
 autofollowdown info                                     # version, backends, benchmark catalog
 autofollowdown benchmark-vision                         # real CNN benchmark (offline)
 autofollowdown benchmark-llm                            # real LLM perplexity benchmark
@@ -296,6 +297,36 @@ Backends and what they're chosen for:
 
 The ranking always shows the *ideal* backend even if it isn't installed, plus the
 best one you can run right now. `recommend()` is advisory; `auto_compress()` executes.
+
+#### Find the best library for your LLM — and see *why*
+
+`autofollowdown recommend <model>` is the advisor command: point it at any model
+(a Hugging Face id — read from its **config only, no weight download** — or a `.pt`),
+and it ranks the libraries, explains the reasoning, and tells you the best pick for your
+goal. Add `--benchmark` to download the model and show the **measured** evidence behind
+the recommendation.
+
+```bash
+autofollowdown recommend Qwen/Qwen3-0.6B --goal accuracy
+```
+
+```
+Model: Qwen/Qwen3-0.6B   family=llm · params=~537M (est.) · HF=True · CUDA=False
+┌───┬─────────────────────────────────┬──────┬───────────────┬──────────────────┐
+│ # │ Library                         │  Fit │ Status        │ Method           │
+│ 1 │ llm-compressor (vLLM)           │ 0.95 │ not installed │ GPTQ W4A16       │
+│ 2 │ NVIDIA TensorRT Model Optimizer │ 0.90 │ not installed │ INT8 SmoothQuant │
+│ 3 │ autofollowdown (native)         │ 0.40 │ runnable here │ int8-dynamic     │
+│ 4 │ Microsoft NNI                   │ 0.20 │ not installed │ L1 + ModelSpeedup│
+└───┴─────────────────────────────────┴──────┴───────────────┴──────────────────┘
+➤ Best library for this model: llm-compressor (vLLM) — GPTQ W4A16
+  Runnable right now: autofollowdown (native) — int8-dynamic (install llmcompressor for the best)
+  For your goal 'accuracy': weight-only 4-bit GPTQ/AWQ preserves accuracy best ...
+```
+
+With `--benchmark` it adds the proof — e.g. *“native INT8 costs +10.0 perplexity on this
+model, which is exactly why we recommend weight-only GPTQ/AWQ for LLMs.”* `--goal` accepts
+`balanced` / `accuracy` / `size` / `speed`.
 
 #### Use a specific connected backend in one line
 

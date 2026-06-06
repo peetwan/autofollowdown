@@ -122,3 +122,24 @@ def test_compress_with_uninstalled_backend_errors_clearly():
     from autofollowdown import compress_with
     with pytest.raises(RuntimeError, match="not installed"):
         compress_with(copy.deepcopy(_mlp()), "nni")
+
+
+def test_recommend_profile_ranks_llm_backends_highest():
+    from autofollowdown import ModelProfile, recommend_profile
+    prof = ModelProfile(family="llm", num_params=600_000_000, has_conv=False,
+                        has_transformer=True, is_huggingface=True, cuda_available=False)
+    _, recs = recommend_profile(prof)
+    top = max(recs, key=lambda r: r.score)
+    assert "llm-compressor" in top.backend  # GPTQ/AWQ is the LLM pick
+
+
+def test_profile_from_pretrained_from_local_config(tmp_path):
+    transformers = pytest.importorskip("transformers")
+    from autofollowdown import profile_from_pretrained
+    cfg = transformers.GPT2Config(vocab_size=128, n_embd=32, n_layer=2, n_head=2)
+    cfg.architectures = ["GPT2LMHeadModel"]
+    d = tmp_path / "cfg"
+    cfg.save_pretrained(str(d))
+    prof = profile_from_pretrained(str(d))
+    assert prof.family == "llm" and prof.is_huggingface
+    assert prof.detail["is_causal_lm"] and prof.num_params > 0

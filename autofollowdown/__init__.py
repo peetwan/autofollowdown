@@ -1,5 +1,13 @@
 from .api import ModelCompressor
-from .auto import Recommendation, auto_compress, compress_with, explain, recommend
+from .auto import (
+    Recommendation,
+    auto_compress,
+    compress_with,
+    explain,
+    rank_backends,
+    recommend,
+    recommend_profile,
+)
 from .backends import all_backends, get_backend
 from .benchmark import Benchmark
 from .ingestion import load_model
@@ -17,7 +25,7 @@ from .llm_eval import (
     perplexity_from_ids,
 )
 from .pipeline import CompressionStudy, compress_and_benchmark
-from .profiler import ModelProfile, profile_model
+from .profiler import ModelProfile, profile_from_pretrained, profile_model
 from .metrics import (
     count_parameters,
     evaluate_accuracy,
@@ -43,8 +51,11 @@ __all__ = [
     "auto_compress",
     "compress_with",
     "recommend",
+    "recommend_profile",
+    "rank_backends",
     "explain",
     "profile_model",
+    "profile_from_pretrained",
     "ModelProfile",
     "Recommendation",
     "all_backends",

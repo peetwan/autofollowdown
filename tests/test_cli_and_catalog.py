@@ -105,7 +105,21 @@ def test_render_table_aligns():
 # ---------------------------------------------------------------------- CLI
 def test_cli_parser_has_subcommands():
     parser = build_parser()
-    for cmd in ("info", "benchmark-vision", "benchmark-llm", "autopick"):
+    for cmd in ("info", "benchmark-vision", "benchmark-llm", "autopick", "compress"):
         args = parser.parse_args([cmd])
         assert args.command == cmd
         assert hasattr(args, "func")
+
+
+def test_cli_recommend_command_parses():
+    parser = build_parser()
+    args = parser.parse_args(["recommend", "Qwen/Qwen3-0.6B", "--goal", "accuracy"])
+    assert args.command == "recommend" and args.model == "Qwen/Qwen3-0.6B"
+    assert args.goal == "accuracy" and hasattr(args, "func")
+
+
+def test_cli_compress_takes_positional_model():
+    parser = build_parser()
+    args = parser.parse_args(["compress", "facebook/opt-125m", "-o", "out.pt"])
+    assert args.command == "compress" and args.model == "facebook/opt-125m"
+    assert args.output == "out.pt"
