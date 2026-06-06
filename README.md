@@ -74,6 +74,12 @@ pip install "git+https://github.com/peetwan/autofollowdown#egg=autofollowdown[ex
 Requires Python `>=3.9`, PyTorch `>=2.1`. All core deps (torch, onnx, onnxruntime,
 transformers, numpy) install automatically.
 
+### 📓 Demo notebook
+
+A runnable walkthrough of everything — with outputs you can see right on GitHub — is in
+[`notebooks/autofollowdown_demo.ipynb`](notebooks/autofollowdown_demo.ipynb) (core API,
+one-command flow, auto-picker, benchmarks, and which datasets are used).
+
 ### Try it in one command
 
 ```bash
@@ -270,6 +276,8 @@ examples/
   benchmark_digits.py   # real before/after benchmark (offline, vision)
   benchmark_llm.py      # real LLM perplexity benchmark (WikiText-2)
   autopick_demo.py      # auto-pick the best backend per model
+notebooks/
+  autofollowdown_demo.ipynb   # runnable walkthrough of the whole toolkit
 tests/              # real tests (assert actual effects, not flags)
 ```
 

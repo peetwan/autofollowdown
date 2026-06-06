@@ -25,5 +25,8 @@ benchmark_report.json
 temp_hf/
 sym_shape_infer_temp.onnx
 
+# Jupyter
+.ipynb_checkpoints/
+
 # OS
 .DS_Store

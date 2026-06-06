@@ -86,6 +86,10 @@ class CompressionStudy:
         print(self._bench.to_table())
         print("\n" + self._bench.summary())
 
+    def to_markdown(self):
+        """Markdown table of the study — handy for notebooks (display(Markdown(...)))."""
+        return self._bench.to_markdown()
+
     def export(self, name, path, format="pt"):
         """Save a chosen variant. `pt` saves the torch model; `onnx` exports a
         graph (float models only — see ModelCompressor.export for the caveat)."""
