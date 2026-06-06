@@ -57,6 +57,25 @@ def test_perplexity_tracks_quantization_effect(tiny_gpt2):
     assert base_ppl > 0
 
 
+def test_lm_distillation_runs_and_updates_student(tiny_gpt2):
+    # Distillation should work on causal LMs (3D logits) via token-level soft KD.
+    transformers = pytest.importorskip("transformers")
+    from torch.utils.data import DataLoader, TensorDataset
+
+    from autofollowdown import ModelCompressor
+
+    scfg = transformers.GPT2Config(vocab_size=128, n_positions=64, n_embd=32,
+                                   n_layer=1, n_head=2)
+    student = transformers.GPT2LMHeadModel(scfg)
+    ids = torch.randint(0, 128, (8, 32))
+    loader = DataLoader(TensorDataset(ids, torch.zeros(8)), batch_size=4)
+
+    before = [p.clone() for p in student.parameters()]
+    ModelCompressor(student).distill(tiny_gpt2, loader, epochs=1)
+    after = list(student.parameters())
+    assert any(not torch.equal(a, b) for a, b in zip(after, before))
+
+
 def test_standard_tasks_catalog():
     assert "wikitext2" in STANDARD_LLM_TASKS["perplexity"]
     assert "hellaswag" in STANDARD_LLM_TASKS["commonsense_zeroshot"]

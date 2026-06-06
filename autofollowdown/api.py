@@ -215,12 +215,25 @@ class ModelCompressor:
                 with torch.no_grad():
                     t_logits = self._logits(teacher(inputs))
 
-                soft = kl(
-                    torch.log_softmax(s_logits / temperature, dim=1),
-                    torch.softmax(t_logits / temperature, dim=1),
-                ) * (temperature ** 2)
-                hard = hard_loss_fn(s_logits, labels)
-                loss = alpha * soft + (1 - alpha) * hard
+                if s_logits.dim() == 3:
+                    # Causal LM: token-level soft distillation over the vocab,
+                    # flattening (batch, seq, vocab) -> (batch*seq, vocab). No hard
+                    # labels needed — the student learns the teacher's distribution.
+                    vocab = s_logits.size(-1)
+                    s_flat = s_logits.reshape(-1, vocab)
+                    t_flat = t_logits.reshape(-1, vocab)
+                    loss = kl(
+                        torch.log_softmax(s_flat / temperature, dim=-1),
+                        torch.softmax(t_flat / temperature, dim=-1),
+                    ) * (temperature ** 2)
+                else:
+                    # Classification: soft KD + hard cross-entropy on the labels.
+                    soft = kl(
+                        torch.log_softmax(s_logits / temperature, dim=1),
+                        torch.softmax(t_logits / temperature, dim=1),
+                    ) * (temperature ** 2)
+                    hard = hard_loss_fn(s_logits, labels)
+                    loss = alpha * soft + (1 - alpha) * hard
                 loss.backward()
                 optimizer.step()
 
