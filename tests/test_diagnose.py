@@ -4,7 +4,7 @@ import pytest
 
 from autofollowdown import ModelProfile, diagnose, memory_needs
 from autofollowdown.cli import build_parser
-from autofollowdown.diagnose import DEVICE_PRESETS, Diagnosis
+from autofollowdown.diagnosis import DEVICE_PRESETS, Diagnosis
 
 
 def _llm(params, gpu=True):
@@ -79,7 +79,7 @@ def test_diagnose_accepts_local_pt(tmp_path):
     import torch.nn as nn
     m = nn.Sequential(nn.Linear(32, 32), nn.ReLU(), nn.Linear(32, 2))
     p = tmp_path / "m.pt"
-    torch.save(m, str(p))
+    torch.save(m.state_dict(), str(p))            # safe state_dict (no pickle execution)
     d = diagnose(str(p), problem="too-big")
     assert d.commands
 

@@ -3,7 +3,7 @@
 [![tests](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml/badge.svg)](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.4.0-blueviolet)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.5.0-blueviolet)](CHANGELOG.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 A unified, simple toolkit for compressing AI models — `quantization`, `pruning`, and
@@ -26,6 +26,7 @@ autofollowdown compress --min-retention 0.98        # smallest variant that keep
 ```
 
 ```
+# autofollowdown auto  (offline digits-CNN demo — every variant measured for real)
 🤖 autofollowdown autopilot   ·   goal: balanced (override with --goal)
 ┌───────────────────────────────┬─────────┬──────────┬────────┬───────┬───────┬────────┐
 │ Model                         │ Size MB │ Sparsity │   Acc  │ Size× │ Speed×│  ΔAcc  │
@@ -39,7 +40,9 @@ autofollowdown compress --min-retention 0.98        # smallest variant that keep
 ```
 
 At a terminal it offers a quick menu for the goal and the variant (Enter = recommended);
-`--yes`, a pipe, or any of `--goal`/`--method`/`--max-size-mb` runs it fully unattended.
+`--yes`, a pipe, or any of `--goal`/`--method`/`--max-size-mb` runs it fully unattended. For
+an LLM the quality column is **WikiText-2 perplexity** (and speed is **tokens/sec** from a
+real `generate()`), and the pick is made on that — never "smallest regardless of quality".
 
 ### 🩺 Stuck? "I can't run this model"
 
@@ -52,16 +55,18 @@ autofollowdown diagnose Qwen/Qwen3-0.6B --device raspberry-pi-5    # or phone / 
 ```
 
 ```
-Will it fit?   fp16 ~20.2 GB ✗   int8 ~10.6 GB ✗   int4 ~5.8 GB ✓
+Will it fit?   fp16 ~19 GB ✗   int8 ~11 GB ✗   int4 ~7 GB ✓   (weights + fp16 KV + overhead)
 → Only 4-bit fits. Quantize to INT4 (GPTQ/AWQ) — ~4× smaller.  (best library: llm-compressor)
   $ autofollowdown gpu meta-llama/Llama-3.1-8B
   $ autofollowdown compress meta-llama/Llama-3.1-8B -o small.pt
 ```
 
-If it won't fit even at 4-bit, it says so and points you to distillation or free-GPU
-offloading. `--problem` ∈ `won't-fit · oom · too-slow · too-big · edge · cost`; device
-presets cover Raspberry Pi / Jetson / phone / microcontroller / GPU tiers. Not sure which
-technique in general? `autofollowdown advise <model> --goal {size,speed,accuracy,ease}`
+The fit numbers are a rough guide (KV cache is modeled in fp16 and ignores context length /
+GQA — verify by loading). If it won't fit even at 4-bit it says so and points you to
+distillation or free-GPU offloading, and on a CPU target it won't recommend GPU-only 4-bit
+nor call a big model "fits" without flagging that it'll be slow. `--problem` ∈ `won't-fit ·
+oom · too-slow · too-big · edge · cost`; presets cover Raspberry Pi / Jetson / phone / GPU
+tiers. Not sure which technique? `autofollowdown advise <model> --goal {size,speed,accuracy,ease}`
 recommends quantize vs prune vs distill, in order, with the *why*.
 
 ### Or drive each step yourself
@@ -100,9 +105,9 @@ pip install "autofollowdown[examples] @ git+https://github.com/peetwan/autofollo
 ```
 
 In a notebook / Colab, prefix with `!`. Requires Python `>=3.9`, PyTorch `>=2.1`; core deps
-(torch, onnx, onnxruntime, onnxscript, transformers, numpy) install automatically. Optional
-backend extras: `[torchao]`, `[bnb]`, `[hqq]`. Once published, this becomes `pip install
-autofollowdown` (see [Publishing](#publishing-to-pypi)).
+(torch, transformers, numpy) install automatically. ONNX export/quant is the optional
+`[onnx]` extra (heavy onnxruntime); compression backends are `[torchao]` / `[bnb]` / `[hqq]`.
+Once published, this becomes `pip install autofollowdown` (see [Publishing](#publishing-to-pypi)).
 
 ### 📓 Notebooks
 
@@ -126,13 +131,17 @@ autofollowdown` (see [Publishing](#publishing-to-pypi)).
 | Distillation | `.distill(teacher, train_loader, epochs)` | A real KD loop — `KL(soft)+CE(hard)` for classifiers, token-level soft KD over the vocab for causal LMs |
 | Export | `.export(path, format)` | Real `.pt` (torch) or `.onnx` (runnable under onnxruntime) |
 
-Inputs accepted: a PyTorch `nn.Module`, a Hugging Face model id, or a local `.onnx` file.
+Inputs accepted: a PyTorch `nn.Module`, a Hugging Face model id, a local `.onnx` file, or a
+`.pt` checkpoint. **Security:** `.pt` files are pickled, so the advisory commands profile them
+safely from the state_dict (no code execution) — pass `--allow-pickle` only for a file you trust.
 
 ## The benchmark
 
 Its point is honesty: it tells you what compression *cost* you. It measures (all real):
-parameter count, true sparsity, on-disk size (MB), p50 latency, throughput, top-1 accuracy,
-and output fidelity vs the baseline.
+parameter count, true sparsity, on-disk size (MB), latency + throughput (for LMs, **tokens/sec
+from a real `generate()`**, not a single forward), top-1 accuracy / fidelity, and — for LMs —
+**WikiText-2 perplexity**. When no quality signal is available it says so and refuses to crown
+a "recommended", rather than silently picking the smallest.
 
 ```python
 from autofollowdown import Benchmark, ModelCompressor
@@ -300,7 +309,7 @@ autofollowdown/
   auto.py           # auto-picker: recommend() / explain() / auto_compress() / compress_with()
   backends.py       # capability-driven registry (native + NNI + llm-compressor + ModelOpt + torchao + bnb + HQQ)
   advisor.py        # advise(): which technique (quantize/prune/distill) + backend, and why
-  diagnose.py       # diagnose(): symptom-first help ("I can't run this model") + fit table
+  diagnosis.py      # diagnose(): symptom-first help ("I can't run this model") + fit table
   gpu.py            # GPU memory planner — sequential onloading so LLMs run on a free GPU
   profiler.py       # model profiling (family / size / hardware)
   metrics.py        # real measurements (size, latency, accuracy, fidelity)
@@ -324,7 +333,7 @@ The package is PyPI-ready (`python -m build` → sdist + wheel that pass `twine 
 (recommended): the `.github/workflows/publish.yml` workflow publishes on every GitHub Release via
 PyPI **Trusted Publishing** (OIDC, no stored token). One-time setup on PyPI → project →
 *Publishing* (owner `peetwan`, repo `autofollowdown`, workflow `publish.yml`, environment `pypi`),
-then `git tag v0.4.0 && git push --tags`. Manual: `python -m build && python -m twine upload dist/*`.
+then `git tag v0.5.0 && git push --tags`. Manual: `python -m build && python -m twine upload dist/*`.
 
 ## License
 

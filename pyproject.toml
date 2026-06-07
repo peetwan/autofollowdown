@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autofollowdown"
-version = "0.4.0"
+dynamic = ["version"]
 description = "A unified, simple toolkit for quantizing, pruning, and distilling AI models — with a real benchmark."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,21 +26,21 @@ classifiers = [
 ]
 dependencies = [
     "torch>=2.1",
-    "onnx>=1.15",
-    "onnxruntime>=1.16",
-    "onnxscript>=0.1",
     "numpy>=1.24",
     "transformers>=4.30",
 ]
 
 [project.optional-dependencies]
+# ONNX export / ingest / quantize — heavy (onnxruntime) and not needed for the
+# core torch compression + benchmark path, so it's an opt-in extra.
+onnx = ["onnx>=1.15", "onnxruntime>=1.16", "onnxscript>=0.1"]
 examples = ["scikit-learn>=1.2", "datasets>=2.0"]
 llm-eval = ["lm-eval>=0.4", "datasets>=2.0"]
 # Optional compression backends — the router uses whichever are installed.
 torchao = ["torchao>=0.7"]
 bnb = ["bitsandbytes>=0.43"]
 hqq = ["hqq>=0.2"]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "onnx>=1.15", "onnxruntime>=1.16", "onnxscript>=0.1"]
 
 [project.scripts]
 autofollowdown = "autofollowdown.cli:main"
@@ -48,6 +48,9 @@ autofollowdown = "autofollowdown.cli:main"
 [project.urls]
 Homepage = "https://github.com/peetwan/autofollowdown"
 Issues = "https://github.com/peetwan/autofollowdown/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "autofollowdown.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["autofollowdown*"]

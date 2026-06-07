@@ -13,17 +13,20 @@ from .metrics import measure_model
 
 class Benchmark:
     def __init__(self, example_input, eval_loader=None, reference_model=None,
-                 device="cpu", latency_runs=30):
+                 device="cpu", latency_runs=30, quality_fn=None):
         """
         example_input   : a representative input batch (tensor / dict) for timing.
         eval_loader      : optional (inputs, labels) dataloader → enables accuracy.
         reference_model  : optional baseline model → enables fidelity (agreement).
+        quality_fn       : optional fn(model)->float, lower = better (e.g. perplexity);
+                           the quality signal for models with no labelled eval set.
         """
         self.example_input = example_input
         self.eval_loader = eval_loader
         self.reference_model = reference_model
         self.device = device
         self.latency_runs = latency_runs
+        self.quality_fn = quality_fn
         self.results = []
 
     def measure(self, model, name):
@@ -35,9 +38,29 @@ class Benchmark:
             reference_model=self.reference_model,
             device=self.device,
             latency_runs=self.latency_runs,
+            quality_fn=self.quality_fn,
         )
         self.results.append(m)
         return m
+
+    def _retention(self, r):
+        """Quality kept vs the baseline, in [0, ~1] (higher = better), from whatever
+        signal exists: accuracy, then perplexity (base/this, since lower ppl is
+        better), then fidelity. Returns None when NO quality was measured — so the
+        recommender never fabricates a quality it doesn't have."""
+        base = self._baseline()
+        if not base:
+            return None
+        if r.get("accuracy") is not None and base.get("accuracy"):
+            return r["accuracy"] / base["accuracy"]
+        if r.get("perplexity") is not None and base.get("perplexity"):
+            return base["perplexity"] / r["perplexity"]
+        if r.get("fidelity") is not None:
+            return r["fidelity"]
+        return None
+
+    def _has_quality(self):
+        return any(self._retention(r) is not None for r in self.results)
 
     def _baseline(self):
         return self.results[0] if self.results else None
@@ -83,14 +106,13 @@ class Benchmark:
 
         def score(r):
             size_ratio = base["size_mb"] / r["size_mb"] if r["size_mb"] else 1.0
-            if r["accuracy"] is not None and base["accuracy"]:
-                retention = r["accuracy"] / base["accuracy"]
-            else:
-                retention = 1.0
-            # accuracy-first, reward compression sub-linearly
-            return (retention ** 2) * (size_ratio ** 0.5)
+            return (self._retention(r) ** 2) * (size_ratio ** 0.5)  # accuracy-first
 
-        recommended = max(self.results, key=score)
+        # Only recommend among variants that have a real quality signal — if NOTHING
+        # was measured (e.g. an LLM with no perplexity/eval), refuse to pick a
+        # "recommended" rather than silently shipping the smallest, possibly-wrecked one.
+        scored = [r for r in self.results if self._retention(r) is not None]
+        recommended = max(scored, key=score) if scored else None
         return {"recommended": recommended, "smallest": smallest,
                 "fastest": fastest, "most_accurate": most_accurate}
 
@@ -139,14 +161,23 @@ class Benchmark:
         if not base:
             return {"row": None, "meets": False, "note": "no baseline measured"}
 
+        # A quality constraint we cannot check must NOT silently pass on size alone.
+        wants_quality = min_accuracy is not None or min_retention is not None
+        if wants_quality and not self._has_quality():
+            return {"row": None, "meets": False,
+                    "note": "cannot check the accuracy/retention constraint — no quality "
+                            "signal was measured (provide an eval_loader, or run an LLM "
+                            "perplexity benchmark)."}
+
         def passes(r):
             if max_size_mb is not None and r["size_mb"] > max_size_mb:
                 return False
             acc = r.get("accuracy")
             if min_accuracy is not None and (acc is None or acc < min_accuracy):
                 return False
-            if min_retention is not None and base.get("accuracy"):
-                if acc is None or acc / base["accuracy"] < min_retention:
+            if min_retention is not None:
+                ret = self._retention(r)
+                if ret is None or ret < min_retention:
                     return False
             return True
 
@@ -177,9 +208,10 @@ class Benchmark:
             acc = r.get("accuracy")
             if min_accuracy is not None and (acc is None or acc < min_accuracy):
                 v += 1
-            if min_retention is not None and base.get("accuracy") and (
-                    acc is None or acc / base["accuracy"] < min_retention):
-                v += 1
+            if min_retention is not None:
+                ret = self._retention(r)
+                if ret is None or ret < min_retention:
+                    v += 1
             return v
 
         closest = min(self.results, key=lambda r: (violations(r), r["size_mb"]))
@@ -191,7 +223,8 @@ class Benchmark:
         """Pretty, aligned terminal table with the recommended row highlighted."""
         rows = self.report()
         picks = self.best_picks()
-        rec_name = picks.get("recommended", {}).get("name")
+        rec = picks.get("recommended")
+        rec_name = rec["name"] if rec else None
 
         def fmt(v, spec, suffix=""):
             return "—" if v is None else format(v, spec) + suffix
@@ -234,6 +267,10 @@ class Benchmark:
         if picks.get("recommended"):
             lines.append("  " + color("➤ Recommended: ", "green", "bold")
                          + describe(picks["recommended"]))
+        else:
+            lines.append("  " + color("⚠ No quality measured", "yellow")
+                         + " (no accuracy/perplexity) — pick by size/speed; "
+                         "quality is unknown, so nothing is recommended as 'best'.")
         if picks.get("smallest"):
             lines.append("  • Smallest:    " + describe(picks["smallest"]))
         if picks.get("fastest"):

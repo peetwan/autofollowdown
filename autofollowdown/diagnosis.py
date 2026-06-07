@@ -44,16 +44,26 @@ PROBLEMS = {
 }
 
 _PRECISIONS = [("fp16", 2.0), ("int8", 1.0), ("int4", 0.5)]
-_OVERHEAD_GB = 1.0      # CUDA/runtime context + flash-attn workspace (rough)
-_KV_FACTOR = 0.2        # rough KV-cache + activation allowance for an interactive session
+_OVERHEAD_GB = 1.0      # framework / runtime + activation workspace (rough)
+# Rough interactive-CPU throughput ceiling: above this many params, a CPU "fits" is
+# still impractically slow (~a couple tok/s), so we flag it.
+_CPU_SLOW_PARAMS = 3e9
 
 
-def memory_needs(num_params):
-    """Rough GB needed to run the model at fp16 / int8 / int4 (weights + KV + overhead)."""
+def memory_needs(num_params, context_length=4096):
+    """Rough GB to *run* the model at fp16 / int8 / int4 = weights(precision) + KV
+    cache + overhead.
+
+    Deliberately conservative and clearly approximate. The KV cache is modeled in
+    fp16 and scaled by params × context (it does NOT shrink with weight precision —
+    a common mistake that makes 4-bit look rosier than it is). It ignores GQA vs MHA,
+    so treat it as a guide, not a guarantee — verify by actually loading the model.
+    """
+    p = num_params or 0
+    kv_gb = (p / 1e9) * (context_length / 4096) * 0.25   # fp16 KV, precision-independent
     out = {}
     for name, bytes_pp in _PRECISIONS:
-        weights = estimate_weight_gb(num_params, bytes_pp)
-        out[name] = weights * (1 + _KV_FACTOR) + _OVERHEAD_GB
+        out[name] = estimate_weight_gb(p, bytes_pp) + kv_gb + _OVERHEAD_GB
     return out
 
 
@@ -100,14 +110,14 @@ class Diagnosis:
         return "\n".join(out)
 
 
-def _resolve_profile(model):
-    from .profiler import ModelProfile, profile_from_pretrained, profile_model
+def _resolve_profile(model, allow_pickle=False):
+    from .profiler import (ModelProfile, profile_checkpoint,
+                           profile_from_pretrained, profile_model)
     if isinstance(model, ModelProfile):
         return model
     if isinstance(model, str):
         if model.endswith((".pt", ".pth")):
-            import torch
-            return profile_model(torch.load(model, weights_only=False))
+            return profile_checkpoint(model, allow_pickle=allow_pickle)
         return profile_from_pretrained(model)
     return profile_model(model)
 
@@ -128,7 +138,7 @@ def _budget(vram_gb, device):
 
 
 def diagnose(model, problem="won't-fit", vram_gb=None, device=None,
-             can_retrain=False, target_size_mb=None):
+             can_retrain=False, target_size_mb=None, allow_pickle=False):
     """Diagnose a real-world problem and prescribe a fix.
 
     problem : won't-fit | oom | too-slow | too-big | edge | cost
@@ -138,7 +148,7 @@ def diagnose(model, problem="won't-fit", vram_gb=None, device=None,
     Returns a `Diagnosis` with a fit table, a plain verdict, the recommended plan,
     and the exact commands to run next.
     """
-    profile = _resolve_profile(model)
+    profile = _resolve_profile(model, allow_pickle=allow_pickle)
     label, goal = PROBLEMS.get(problem, PROBLEMS["won't-fit"])
     budget_gb, budget_label = _budget(vram_gb, device)
     # an edge device or microcontroller usually implies you can/should retrain a student
@@ -193,10 +203,27 @@ def diagnose(model, problem="won't-fit", vram_gb=None, device=None,
                    "need more. Set a size budget and check after each step.")
         max_ratio = (target_size_mb and 0.25) or None
 
+    # Honest hardware: a GPU preset or a real CUDA device → gpu; otherwise cpu.
+    # (Budget size alone does NOT imply a GPU — a 12 GB laptop is still CPU.)
+    if device and device.startswith("gpu"):
+        hw = "gpu"
+    elif profile.cuda_available:
+        hw = "gpu"
+    else:
+        hw = "cpu"
+
     # Build the concrete technique plan + the commands to run next.
     plan = advise(profile, goal=goal, max_size_ratio=max_ratio,
-                  can_retrain=can_retrain,
-                  hardware="gpu" if (budget_gb and budget_gb > 4) else None)
+                  can_retrain=can_retrain, hardware=hw)
+
+    # Throughput reality check: a big model on CPU may "fit" yet be too slow to use.
+    if hw == "cpu" and (profile.num_params or 0) > _CPU_SLOW_PARAMS:
+        notes.append("Even if it fits, a model this big on CPU runs at ~a couple tok/s — "
+                     "impractical for interactive use; prefer a smaller/distilled model.")
+    # Surface advise's runnable caveats (e.g. "INT4 needs a GPU backend") so diagnose
+    # never recommends something the local machine can't actually produce.
+    notes += [c for c in plan.caveats if ("INT4" in c or "needs a GPU" in c)
+              and c not in notes]
 
     if budget_gb is not None:
         commands.append(f"autofollowdown gpu {model_ref}".strip())

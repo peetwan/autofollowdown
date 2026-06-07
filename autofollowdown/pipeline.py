@@ -42,12 +42,12 @@ class CompressionStudy:
     """Holds the baseline + compressed variants, their benchmark, and the pick."""
 
     def __init__(self, baseline, example_input, eval_loader=None, device="cpu",
-                 latency_runs=20):
+                 latency_runs=20, quality_fn=None):
         self.device = device
         self.models = {}
         self._bench = Benchmark(example_input, eval_loader=eval_loader,
                                 reference_model=baseline, device=device,
-                                latency_runs=latency_runs)
+                                latency_runs=latency_runs, quality_fn=quality_fn)
         self._add("baseline", baseline)
 
     def _add(self, name, model):
@@ -140,7 +140,7 @@ class CompressionStudy:
 
 def compress_and_benchmark(model, example_input=None, eval_loader=None,
                            methods=None, calibration_data=None, device="cpu",
-                           latency_runs=20, input_shape=None):
+                           latency_runs=20, input_shape=None, quality_fn=None):
     """Run the full workflow and return a CompressionStudy.
 
     Applies each method in `methods` (default: INT8 dynamic, 50% pruning, and
@@ -149,8 +149,12 @@ def compress_and_benchmark(model, example_input=None, eval_loader=None,
     enables accuracy/fidelity; if `example_input` is omitted it's inferred.
     """
     if isinstance(model, str):
-        from .ingestion import load_model            # accept a HF id / .pt path directly
-        model = load_model(model)
+        from .ingestion import load_model            # accept a HF id / path directly
+        loaded = load_model(model)
+        if loaded["type"] == "onnx":
+            raise ValueError("compress_and_benchmark works on torch models; for ONNX use "
+                             "optimize_onnx/prune_onnx in onnx_pipeline.")
+        model = loaded["model"]
     if not isinstance(model, torch.nn.Module):
         raise ValueError("compress_and_benchmark expects a torch.nn.Module or a model id/path")
 
@@ -160,7 +164,7 @@ def compress_and_benchmark(model, example_input=None, eval_loader=None,
 
     methods = methods or DEFAULT_METHODS
     study = CompressionStudy(model, example_input, eval_loader=eval_loader,
-                             device=device, latency_runs=latency_runs)
+                             device=device, latency_runs=latency_runs, quality_fn=quality_fn)
     from .gpu import free_memory
     for method in methods:
         try:

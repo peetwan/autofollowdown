@@ -58,8 +58,8 @@ def _cmd_recommend(args):
 
     model = args.model
     if model.endswith((".pt", ".pth")):
-        import torch
-        profile = profile_model(torch.load(model, weights_only=False))
+        from .profiler import profile_checkpoint
+        profile = profile_checkpoint(model, allow_pickle=getattr(args, "allow_pickle", False))
     else:
         print(f"Reading config for {model} (no weights downloaded) ...")
         profile = profile_from_pretrained(model)
@@ -127,7 +127,7 @@ def _recommend_benchmark(model, profile, max_chars):
 def _cmd_diagnose(args):
     """Symptom-first help: 'I can't run this model'. Tell it the problem + your
     hardware and it says exactly what to do, with a fit table and the next command."""
-    from .diagnose import DEVICE_PRESETS, PROBLEMS, diagnose
+    from .diagnosis import DEVICE_PRESETS, PROBLEMS, diagnose
 
     if args.list_devices:
         print(color("Device presets:", "bold"))
@@ -146,7 +146,7 @@ def _cmd_diagnose(args):
 
     d = diagnose(args.model, problem=args.problem, vram_gb=args.vram,
                  device=args.device, can_retrain=args.can_retrain,
-                 target_size_mb=args.target_size_mb)
+                 target_size_mb=args.target_size_mb, allow_pickle=args.allow_pickle)
     print(color(f"\nModel: {args.model}\n", "bold", "cyan"))
     print(d.to_text(color=color))
 
@@ -164,7 +164,8 @@ def _cmd_advise(args):
                   max_size_ratio=args.max_size_ratio,
                   min_accuracy_retention=args.min_retention,
                   can_retrain=args.can_retrain,
-                  hardware=args.hardware)
+                  hardware=args.hardware,
+                  allow_pickle=args.allow_pickle)
     print(color(f"\nModel: {args.model}", "bold", "cyan")
           + f"  (family={plan.family}, goal={plan.goal})\n")
     print(plan.to_text(color=color))
@@ -188,10 +189,9 @@ def _cmd_gpu(args):
         print("  autofollowdown gpu Qwen/Qwen3-0.6B")
         return
 
-    from .profiler import profile_from_pretrained, profile_model
+    from .profiler import profile_checkpoint, profile_from_pretrained
     if args.model.endswith((".pt", ".pth")):
-        import torch
-        profile = profile_model(torch.load(args.model, weights_only=False))
+        profile = profile_checkpoint(args.model, allow_pickle=getattr(args, "allow_pickle", False))
     else:
         print(f"Reading config for {args.model} (no weights downloaded) ...")
         profile = profile_from_pretrained(args.model)
@@ -218,9 +218,16 @@ def _cmd_info(args):
 
     print(color(f"autofollowdown {__version__}", "bold", "cyan"))
     print("Unified quantization · pruning · distillation, with real benchmarks.\n")
+    from .gpu import cuda_info
+    has_cuda = cuda_info()["available"]
     print(color("Compression backends:", "bold"))
     for b in all_backends():
-        status = "installed" if b.is_available() else f"not installed ({b.install_hint})"
+        if not b.is_available():
+            status = f"not installed ({b.install_hint})"
+        elif b.needs_cuda and not has_cuda:
+            status = "installed, but needs a CUDA GPU (none here) — can't run"
+        else:
+            status = "installed ✓"
         print(f"  • {b.name:<38} {status}")
     print("\n" + color("LLM benchmark tasks (lm-eval-harness ids):", "bold"))
     for group, tasks in STANDARD_LLM_TASKS.items():
@@ -294,6 +301,8 @@ def build_parser():
     r.add_argument("--benchmark", action="store_true",
                    help="download the model and measure native-INT8 vs fp32 perplexity as evidence")
     r.add_argument("--max-chars", type=int, default=3000, help="eval text length for --benchmark")
+    r.add_argument("--allow-pickle", action="store_true",
+                   help="trust a .pt enough to unpickle it (runs code — only for files you trust)")
     r.set_defaults(func=_cmd_recommend)
 
     dg = sub.add_parser(
@@ -314,6 +323,8 @@ def build_parser():
     dg.add_argument("--can-retrain", action="store_true",
                     help="allow distillation / pruning fine-tune")
     dg.add_argument("--list-devices", action="store_true", help="list device presets and exit")
+    dg.add_argument("--allow-pickle", action="store_true",
+                    help="trust a .pt enough to unpickle it (runs code — only for files you trust)")
     dg.set_defaults(func=_cmd_diagnose)
 
     ad = sub.add_parser(
@@ -331,6 +342,8 @@ def build_parser():
                     help="allow techniques that need training (pruning fine-tune, distillation)")
     ad.add_argument("--hardware", default=None, choices=["cpu", "gpu"],
                     help="target hardware (default: auto-detect)")
+    ad.add_argument("--allow-pickle", action="store_true",
+                    help="trust a .pt enough to unpickle it (runs code — only for files you trust)")
     ad.set_defaults(func=_cmd_advise)
 
     g = sub.add_parser(
@@ -340,6 +353,8 @@ def build_parser():
                    help="HF model id or .pt path to plan for (optional)")
     g.add_argument("--vram", type=float, default=None,
                    help="pretend this many GB of VRAM are free (for planning on CPU)")
+    g.add_argument("--allow-pickle", action="store_true",
+                   help="trust a .pt enough to unpickle it (runs code — only for files you trust)")
     g.set_defaults(func=_cmd_gpu)
 
     sub.add_parser("info", help="show version, backends, and benchmark catalog"

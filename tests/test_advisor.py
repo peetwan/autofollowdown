@@ -90,7 +90,7 @@ def test_advise_accepts_local_pt(tmp_path):
     cnn = nn.Sequential(nn.Conv2d(3, 8, 3, padding=1), nn.ReLU(),
                         nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(8, 10))
     p = tmp_path / "m.pt"
-    torch.save(cnn, str(p))
+    torch.save(cnn.state_dict(), str(p))          # safe state_dict (no pickle execution)
     plan = advise(str(p), goal="balanced")
     assert plan.family == "cnn" and plan.steps
 

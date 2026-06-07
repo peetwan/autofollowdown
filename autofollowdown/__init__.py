@@ -12,7 +12,7 @@ stay near-instant, and the heavy deep-learning stack (torch / transformers / onn
 is only loaded the first time you actually touch a symbol that needs it.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # name -> submodule it lives in. The single source of truth for what we export
 # and where it resolves; `__getattr__` loads the submodule on first access.
@@ -37,10 +37,10 @@ _EXPORTS = {
     "CompressionPlan": "advisor",
     "TECHNIQUES": "advisor",
     # symptom-first help ("I can't run this model")
-    "diagnose": "diagnose",
-    "Diagnosis": "diagnose",
-    "DEVICE_PRESETS": "diagnose",
-    "memory_needs": "diagnose",
+    "diagnose": "diagnosis",
+    "Diagnosis": "diagnosis",
+    "DEVICE_PRESETS": "diagnosis",
+    "memory_needs": "diagnosis",
     # profiling
     "profile_model": "profiler",
     "profile_from_pretrained": "profiler",

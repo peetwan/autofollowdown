@@ -4,6 +4,46 @@ All notable changes to autofollowdown are documented here. The format is based o
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-07
+
+A correctness, safety, and honesty release — fixes from a deep self-audit.
+
+### Security
+- **Fixed pickle-RCE.** `recommend` / `advise` / `diagnose` / `gpu` used to
+  `torch.load(weights_only=False)` a user `.pt`, executing arbitrary code. They now
+  profile `.pt` safely from the state_dict (`profiler.profile_checkpoint`, no code
+  execution); `ingestion.load_model` refuses pickled checkpoints by default. Opt in
+  with `--allow-pickle` / `allow_pickle=True` for files you trust.
+
+### Fixed (correctness)
+- **No more unsafe LLM picks.** The benchmark never fabricates `retention=1.0` when no
+  quality was measured: it refuses to crown a "recommended" (and says so) instead of
+  silently shipping the smallest, possibly-wrecked variant. `--min-retention` /
+  `--min-accuracy` now error (`meets=False`) when they can't be checked, instead of
+  passing on size alone. The LLM auto flow now measures **WikiText-2 perplexity** and
+  picks on it.
+- **LLM speed is real.** Latency/throughput for causal LMs is now **tokens/sec from a
+  short `generate()`**, not a single ~8-token prefill forward.
+- **`compress_and_benchmark("hf-id")`** (the documented headline) no longer raises — it
+  loads the model instead of a dict.
+- **`from autofollowdown import diagnose`** now returns the function (the module was
+  renamed `diagnose.py` → `diagnosis.py` to stop it shadowing the export).
+
+### Changed (honesty & practicality)
+- `advise` / `diagnose` no longer recommend things the local machine can't produce:
+  on a CPU target they recommend portable INT8 (not GPU-only INT4), and when 4-bit is
+  ideal but no GPU backend is runnable they say so explicitly.
+- `diagnose` memory math models the KV cache in fp16 (precision-independent) and flags
+  big models that "fit" on CPU but run too slowly to be practical; it no longer treats
+  "budget > 4 GB" as "has a GPU".
+- The LLM auto flow skips the no-op unstructured-prune rows (dense `.pt` doesn't shrink
+  from zeros) and the wasted multi-GB deepcopy.
+- **Lighter install:** the heavy ONNX stack (onnx/onnxruntime/onnxscript) moved to an
+  `[onnx]` extra; `api`/`ingestion` import torch-only for the core path (a plain CNN no
+  longer pulls in onnxruntime/transformers). Package version is now single-sourced from
+  `__init__.__version__`. `info` shows when a backend is installed but needs a CUDA GPU.
+- +11 tests (`test_fixes.py`); full suite 175 passed.
+
 ## [0.4.0] - 2026-06-07
 
 ### Changed — auto-first flow redesign

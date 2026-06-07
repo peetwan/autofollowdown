@@ -142,17 +142,49 @@ def output_agreement(model, reference_model, dataloader, device="cpu"):
     return 1.0 if total == 0 else agree / total
 
 
+def _looks_causal_lm(model, example_input):
+    return (hasattr(model, "generate") and isinstance(example_input, dict)
+            and "input_ids" in example_input)
+
+
+@torch.no_grad()
+def generation_speed(model, example_input, max_new_tokens=32, n_warmup=1, n_runs=3,
+                     device="cpu"):
+    """For a causal LM, time `generate()` and return (ms_per_token, tokens_per_s) —
+    a meaningful inference-speed metric, unlike a single prefill forward."""
+    import statistics
+    model = model.to(device).eval()
+    ids = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in example_input.items()}
+    for _ in range(n_warmup):
+        model.generate(**ids, max_new_tokens=4, do_sample=False)
+    times = []
+    for _ in range(n_runs):
+        t0 = time.perf_counter()
+        model.generate(**ids, max_new_tokens=max_new_tokens, do_sample=False)
+        times.append(time.perf_counter() - t0)
+    med = statistics.median(times) if times else 0.0
+    tok_per_s = (max_new_tokens / med) if med > 0 else 0.0
+    ms_per_token = (med / max_new_tokens) * 1000 if max_new_tokens else 0.0
+    return ms_per_token, tok_per_s
+
+
 def measure_model(model, name, example_input, eval_loader=None,
-                  reference_model=None, device="cpu", latency_runs=30):
+                  reference_model=None, device="cpu", latency_runs=30, quality_fn=None):
     """Measure every available metric for one model and return a flat dict.
 
-    `eval_loader` enables accuracy; `reference_model` enables fidelity. Both are
-    optional so size/latency can be benchmarked even with no labelled data.
+    `eval_loader` enables accuracy; `reference_model` enables fidelity; `quality_fn`
+    (e.g. perplexity for LMs, lower = better) enables a quality signal when there is
+    no labelled data. All optional, so size/latency always work.
+
+    For a causal LM, latency is measured from `generate()` as ms/token (throughput =
+    tokens/sec) instead of a single, misleading prefill forward.
     """
     total, nonzero, sparsity = count_parameters(model)
-    latency_ms, throughput = measure_latency(
-        model, example_input, n_runs=latency_runs, device=device
-    )
+    if _looks_causal_lm(model, example_input):
+        latency_ms, throughput = generation_speed(model, example_input, device=device)
+    else:
+        latency_ms, throughput = measure_latency(
+            model, example_input, n_runs=latency_runs, device=device)
     result = {
         "name": name,
         "params": total,
@@ -163,12 +195,13 @@ def measure_model(model, name, example_input, eval_loader=None,
         "throughput": throughput,
         "accuracy": None,
         "fidelity": None,
+        "perplexity": None,
     }
     if eval_loader is not None:
         result["accuracy"] = evaluate_accuracy(model, eval_loader, device=device)
-    # Fidelity needs both a reference model and data to run it on.
     if reference_model is not None and eval_loader is not None:
         result["fidelity"] = output_agreement(
-            model, reference_model, eval_loader, device=device
-        )
+            model, reference_model, eval_loader, device=device)
+    if quality_fn is not None:
+        result["perplexity"] = float(quality_fn(model))   # lower = better
     return result

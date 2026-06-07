@@ -187,13 +187,27 @@ def auto_study(model_spec=None, epochs=8):
         return study
 
     print(f"Loading {model_spec} ...")
-    from transformers import AutoModel, AutoModelForCausalLM
+    from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
+
+    quality_fn = None
     try:
         model = AutoModelForCausalLM.from_pretrained(model_spec, dtype=torch.float32)
+        # Wire a real QUALITY signal so the pick isn't "smallest regardless of quality":
+        # WikiText-2 perplexity (lower = better) on a short slice.
+        from .llm_eval import evaluate_perplexity, load_wikitext2
+        tok = AutoTokenizer.from_pretrained(model_spec)
+        text = load_wikitext2("test")[:2000]
+        quality_fn = lambda m: evaluate_perplexity(m, tok, text, stride=512, max_length=512)
+        print("Applying compression methods + benchmarking (size/latency/perplexity) ...")
+        # Native can only usefully do INT8 dynamic on an LLM; unstructured pruning
+        # never shrinks dense weights, so skip the no-op prune rows (and the wasted
+        # multi-GB deepcopy/reserialize). For 4-bit, use a GPU backend (see `advise`).
+        return compress_and_benchmark(model.eval(), methods=["int8 dynamic"],
+                                      quality_fn=quality_fn)
     except Exception:
-        model = AutoModel.from_pretrained(model_spec)
-    print("Applying compression methods + benchmarking (size/latency) ...")
-    return compress_and_benchmark(model.eval())
+        model = AutoModel.from_pretrained(model_spec)   # non-causal (e.g. an encoder)
+        print("Applying compression methods + benchmarking (size/latency) ...")
+        return compress_and_benchmark(model.eval(), methods=["int8 dynamic"])
 
 
 # --------------------------------------------------------------- autopick demo

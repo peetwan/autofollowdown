@@ -123,21 +123,24 @@ class CompressionPlan:
         return "\n".join(out)
 
 
-def _resolve_profile(model):
-    """Accept a ModelProfile, an nn.Module, a HF id, or a .pt path."""
-    from .profiler import ModelProfile, profile_from_pretrained, profile_model
+def _resolve_profile(model, allow_pickle=False):
+    """Accept a ModelProfile, an nn.Module, a HF id, or a .pt path.
+
+    `.pt`/`.pth` files are profiled safely (no pickle execution) unless
+    `allow_pickle=True` — see profiler.profile_checkpoint."""
+    from .profiler import (ModelProfile, profile_checkpoint,
+                           profile_from_pretrained, profile_model)
     if isinstance(model, ModelProfile):
         return model
     if isinstance(model, str):
         if model.endswith((".pt", ".pth")):
-            import torch
-            return profile_model(torch.load(model, weights_only=False))
+            return profile_checkpoint(model, allow_pickle=allow_pickle)
         return profile_from_pretrained(model)
     return profile_model(model)
 
 
 def advise(model, goal="balanced", max_size_ratio=None, min_accuracy_retention=None,
-           can_retrain=False, hardware=None):
+           can_retrain=False, hardware=None, allow_pickle=False):
     """Return a `CompressionPlan` — which technique(s) + backend to use, and why.
 
     Parameters
@@ -149,7 +152,7 @@ def advise(model, goal="balanced", max_size_ratio=None, min_accuracy_retention=N
     """
     from .auto import rank_backends
 
-    profile = _resolve_profile(model)
+    profile = _resolve_profile(model, allow_pickle=allow_pickle)
     fam = profile.family
     on_gpu = profile.cuda_available if hardware is None else (hardware == "gpu")
 
@@ -213,8 +216,17 @@ def advise(model, goal="balanced", max_size_ratio=None, min_accuracy_retention=N
     if max_size_ratio:
         caveats.append(f"target is {1/max_size_ratio:.1f}× smaller — stack steps in this order "
                        "and check the size after each.")
-    if any(s.technique == "quantize-int4" for s in steps) and not on_gpu:
-        caveats.append("4-bit quality needs a GPU; on CPU prefer portable INT8 (native).")
+    # Honesty: if the plan recommends 4-bit but no low-bit quantizer is actually
+    # runnable here, say so — don't recommend something the local machine can't produce.
+    has_int4 = any(s.technique == "quantize-int4" for s in steps)
+    runnable_quantizer = next(
+        (r for r in recs if r.runnable and _alias_for(r.backend) in _QUANTIZERS), None)
+    if has_int4 and runnable_quantizer is None:
+        caveats.insert(0, "INT4 GPTQ/AWQ needs a GPU + a backend like llm-compressor / "
+                          "torchao — none is runnable here, so locally you'd only get "
+                          "portable INT8 (native). Run the 4-bit step on a GPU (e.g. Colab).")
+    elif has_int4 and not on_gpu:
+        caveats.append("4-bit quality is best on a GPU; on CPU prefer portable INT8 (native).")
     # de-duplicate, keep order
     caveats = list(dict.fromkeys(caveats))
 

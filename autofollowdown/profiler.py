@@ -92,6 +92,68 @@ def profile_model(model):
     )
 
 
+_ATTN_KEY_MARKERS = ("attn", "attention", "q_proj", "k_proj", "v_proj", "self_attn",
+                     "in_proj_weight", "wq", "wk", "wv", "query", "key", "value")
+
+
+def profile_checkpoint(path, allow_pickle=False):
+    """Profile a `.pt`/`.pth` file **without executing pickle code**.
+
+    Security: pointing the tool at an untrusted checkpoint must never run code.
+    By default this loads with `weights_only=True` (tensors only, no pickle) and
+    builds a `ModelProfile` from the state_dict alone — parameter count from tensor
+    sizes, family from key/shape heuristics. Pass `allow_pickle=True` only for a
+    file you trust; that path uses the unsafe loader and can run arbitrary code.
+    """
+    if allow_pickle:
+        obj = torch.load(path, weights_only=False)   # trusted only — can execute code
+        if isinstance(obj, nn.Module):
+            return profile_model(obj)
+        sd = obj
+    else:
+        try:
+            sd = torch.load(path, weights_only=True)
+        except Exception as e:
+            raise ValueError(
+                f"Could not safely load {path!r} as weights (weights_only=True). It may be "
+                "a pickled full model — re-run with --allow-pickle / allow_pickle=True only "
+                f"if you trust the file (it can run arbitrary code). [{type(e).__name__}: {e}]"
+            ) from e
+
+    if isinstance(sd, dict) and isinstance(sd.get("state_dict"), dict):
+        sd = sd["state_dict"]
+    tensors = ({k: v for k, v in sd.items() if hasattr(v, "numel")}
+               if isinstance(sd, dict) else {})
+    if not tensors:
+        raise ValueError(
+            f"{path!r} doesn't look like a state_dict (likely a pickled full model). "
+            "Re-run with --allow-pickle / allow_pickle=True if you trust it.")
+
+    num_params = sum(int(v.numel()) for v in tensors.values())
+    keys = " ".join(tensors).lower()
+    has_conv = any(getattr(v, "ndim", 0) == 4 for v in tensors.values()) or "conv" in keys
+    has_transformer = any(m in keys for m in _ATTN_KEY_MARKERS)
+    is_causal = ("lm_head" in keys) or ("embed_tokens" in keys and has_transformer)
+
+    if has_transformer and (is_causal or num_params >= 50_000_000):
+        family = "llm"
+    elif has_transformer:
+        family = "transformer"
+    elif has_conv:
+        family = "cnn"
+    elif tensors:
+        family = "mlp"
+    else:
+        family = "unknown"
+
+    return ModelProfile(
+        family=family, num_params=num_params, has_conv=has_conv,
+        has_transformer=has_transformer, is_huggingface=False,
+        cuda_available=torch.cuda.is_available(),
+        detail={"is_causal_lm": bool(is_causal), "from_checkpoint": True},
+    )
+
+
 def profile_from_pretrained(model_id):
     """Build a ModelProfile from a Hugging Face *config* alone — no weight download.
 

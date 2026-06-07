@@ -17,7 +17,8 @@ import torch.nn as nn
 import torch.nn.utils.prune as prune
 
 from .ingestion import load_model
-from .onnx_pipeline import export_to_onnx, optimize_onnx, prune_onnx
+# onnx_pipeline (and thus onnx / onnxruntime) is imported lazily inside the ONNX
+# methods below, so compressing a plain nn.Module never pulls in the ONNX stack.
 
 # Module types whose `weight` tensors are worth pruning / quantizing.
 _PRUNABLE = (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)
@@ -113,6 +114,7 @@ class ModelCompressor:
                 prune.remove(m, "weight")
 
     def _prune_onnx(self, sparsity):
+        from .onnx_pipeline import prune_onnx
         out_path = self.model + ".pruned.onnx"
         return prune_onnx(self.model, out_path, sparsity=sparsity)
 
@@ -162,6 +164,7 @@ class ModelCompressor:
         return convert_fx(prepared)
 
     def _quantize_onnx(self, approach, calibration_data):
+        from .onnx_pipeline import optimize_onnx
         out_path = self.model + ".quant.onnx"
         return optimize_onnx(self.model, out_path, {
             "quantize": True,
@@ -277,6 +280,7 @@ class ModelCompressor:
                     "for INT8 ONNX, ingest/export to ONNX first then quantize on the "
                     "ONNX graph (see onnx_pipeline.optimize_onnx)."
                 )
+            from .onnx_pipeline import export_to_onnx
             export_to_onnx(self.model, "pytorch", output_path,
                            input_shape=self.input_shape)
 
