@@ -28,6 +28,7 @@ dependencies = [
     "torch>=2.1",
     "numpy>=1.24",
     "transformers>=4.30",
+    "safetensors>=0.4",       # safe (no-pickle) weight export + profiling
 ]
 
 [project.optional-dependencies]

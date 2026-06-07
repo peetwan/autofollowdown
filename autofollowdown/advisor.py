@@ -133,7 +133,7 @@ def _resolve_profile(model, allow_pickle=False):
     if isinstance(model, ModelProfile):
         return model
     if isinstance(model, str):
-        if model.endswith((".pt", ".pth")):
+        if model.endswith((".pt", ".pth", ".safetensors")):
             return profile_checkpoint(model, allow_pickle=allow_pickle)
         return profile_from_pretrained(model)
     return profile_model(model)

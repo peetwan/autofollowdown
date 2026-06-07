@@ -4,6 +4,20 @@ All notable changes to autofollowdown are documented here. The format is based o
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-07
+
+### Added — safe `safetensors` export (the follow-on to the 0.5.0 security fix)
+- `ModelCompressor.export(path, format="safetensors")` and
+  `CompressionStudy.export(..., format="safetensors")` save weights with no pickle
+  (handles tied/shared tensors via `safetensors.save_model`). Torch-quantized models
+  keep packed non-tensor params, so safetensors fails there with a clear pointer to
+  `format="pt"`. `autofollowdown compress --format safetensors` exposes it.
+- `profile_checkpoint` (and the `recommend` / `advise` / `diagnose` / `gpu` commands)
+  now read `.safetensors` — so a model you exported re-profiles with **zero
+  `--allow-pickle`**, closing the friction the security fix introduced.
+- `safetensors` is now a (tiny) core dependency.
+- +5 tests; full suite 180 passed.
+
 ## [0.5.0] - 2026-06-07
 
 A correctness, safety, and honesty release — fixes from a deep self-audit.

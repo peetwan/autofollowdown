@@ -35,6 +35,14 @@ def load_model(model_input, input_shape=None, allow_pickle=False) -> dict:
         except Exception as e:
             raise ValueError(f"Failed to load ONNX model from {model_input}: {e}") from e
 
+    # safetensors holds weights only (no architecture), so it can't be turned into a
+    # runnable model to compress — but it IS safe to *profile* (recommend/advise/...).
+    if model_input.endswith(".safetensors"):
+        raise ValueError(
+            f"{model_input!r} is a weights-only safetensors file — it has no architecture "
+            "to run/compress. Build the model and load_state_dict(load_file(...)) into it, "
+            "then pass the nn.Module. (You can still `recommend`/`advise`/`diagnose` it.)")
+
     # Local PyTorch checkpoint — pickled, so gated behind allow_pickle.
     if model_input.endswith((".pt", ".pth")):
         if not os.path.exists(model_input):

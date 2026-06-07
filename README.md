@@ -3,7 +3,7 @@
 [![tests](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml/badge.svg)](https://github.com/peetwan/autofollowdown/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.5.0-blueviolet)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.6.0-blueviolet)](CHANGELOG.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 A unified, simple toolkit for compressing AI models — `quantization`, `pruning`, and
@@ -129,11 +129,13 @@ Once published, this becomes `pip install autofollowdown` (see [Publishing](#pub
 | Pruning | `.prune(sparsity, method)` | Global L1 magnitude (`unstructured`) or per-channel L2 (`structured`) pruning via `torch.nn.utils.prune`, made permanent so zeros are real |
 | Quantization | `.quantize(method, approach)` | INT8 `dynamic` (portable) or FX `static` PTQ with calibration; `fp16`; INT8 on the ONNX graph for `.onnx` inputs |
 | Distillation | `.distill(teacher, train_loader, epochs)` | A real KD loop — `KL(soft)+CE(hard)` for classifiers, token-level soft KD over the vocab for causal LMs |
-| Export | `.export(path, format)` | Real `.pt` (torch) or `.onnx` (runnable under onnxruntime) |
+| Export | `.export(path, format)` | `safetensors` (weights, safe — no pickle), `pt` (full torch), or `onnx` (runnable under onnxruntime) |
 
 Inputs accepted: a PyTorch `nn.Module`, a Hugging Face model id, a local `.onnx` file, or a
-`.pt` checkpoint. **Security:** `.pt` files are pickled, so the advisory commands profile them
-safely from the state_dict (no code execution) — pass `--allow-pickle` only for a file you trust.
+`.pt` / `.safetensors` checkpoint. **Security:** `.pt` files are pickled, so the advisory
+commands profile them safely from the state_dict (no code execution) — pass `--allow-pickle`
+only for a file you trust. Prefer exporting `safetensors` (weights, no pickle): it shares and
+re-profiles with zero `--allow-pickle`.
 
 ## The benchmark
 
@@ -333,7 +335,7 @@ The package is PyPI-ready (`python -m build` → sdist + wheel that pass `twine 
 (recommended): the `.github/workflows/publish.yml` workflow publishes on every GitHub Release via
 PyPI **Trusted Publishing** (OIDC, no stored token). One-time setup on PyPI → project →
 *Publishing* (owner `peetwan`, repo `autofollowdown`, workflow `publish.yml`, environment `pypi`),
-then `git tag v0.5.0 && git push --tags`. Manual: `python -m build && python -m twine upload dist/*`.
+then `git tag v0.6.0 && git push --tags`. Manual: `python -m build && python -m twine upload dist/*`.
 
 ## License
 

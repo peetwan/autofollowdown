@@ -57,7 +57,7 @@ def _cmd_recommend(args):
     from .profiler import profile_from_pretrained, profile_model
 
     model = args.model
-    if model.endswith((".pt", ".pth")):
+    if model.endswith((".pt", ".pth", ".safetensors")):
         from .profiler import profile_checkpoint
         profile = profile_checkpoint(model, allow_pickle=getattr(args, "allow_pickle", False))
     else:
@@ -99,7 +99,7 @@ def _cmd_recommend(args):
 def _recommend_benchmark(model, profile, max_chars):
     """Measured evidence: what the portable native INT8 baseline actually costs on
     this model — the justification for preferring GPTQ/AWQ/ModelOpt on LLMs."""
-    if not profile.is_huggingface or model.endswith((".pt", ".pth")):
+    if not profile.is_huggingface or model.endswith((".pt", ".pth", ".safetensors")):
         print(color("\n(Benchmark evidence supports HF model ids; skipping.)", "yellow"))
         return
     import copy
@@ -156,7 +156,7 @@ def _cmd_advise(args):
     'where do I even start: quantize, prune, or distill?' decision, in one place."""
     from .advisor import advise
 
-    if args.model.endswith((".pt", ".pth")):
+    if args.model.endswith((".pt", ".pth", ".safetensors")):
         print(f"Profiling {args.model} ...")
     else:
         print(f"Reading config for {args.model} (no weights downloaded) ...")
@@ -190,7 +190,7 @@ def _cmd_gpu(args):
         return
 
     from .profiler import profile_checkpoint, profile_from_pretrained
-    if args.model.endswith((".pt", ".pth")):
+    if args.model.endswith((".pt", ".pth", ".safetensors")):
         profile = profile_checkpoint(args.model, allow_pickle=getattr(args, "allow_pickle", False))
     else:
         print(f"Reading config for {args.model} (no weights downloaded) ...")
@@ -270,7 +270,8 @@ def build_parser():
                             help="only keep a variant under this size (auto-picks the best that fits)")
         parser.add_argument("--min-retention", type=float, default=None,
                             help="keep ≥ this fraction of baseline accuracy (e.g. 0.98)")
-        parser.add_argument("--format", default="pt", choices=["pt", "onnx"])
+        parser.add_argument("--format", default="pt", choices=["pt", "onnx", "safetensors"],
+                            help="pt = full torch (pickled); safetensors = weights only (safe)")
         parser.add_argument("--epochs", type=int, default=8, help="epochs for the offline demo")
         parser.add_argument("--yes", action="store_true",
                             help="no prompts — full auto (take every recommendation)")

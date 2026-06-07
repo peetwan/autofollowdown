@@ -25,6 +25,23 @@ _PRUNABLE = (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)
 _QUANTIZABLE_DYNAMIC = {nn.Linear, nn.LSTM, nn.GRU, nn.RNN}
 
 
+def save_safetensors(model, output_path):
+    """Save a model's weights as safetensors — safe (no pickle, can't carry code),
+    the recommended format for sharing a compressed model. `safetensors.save_model`
+    handles tied/shared tensors. Torch-quantized models keep packed (non-tensor)
+    params that safetensors can't serialize, so we fail with a clear pointer to `pt`.
+    """
+    from safetensors.torch import save_model
+    try:
+        save_model(model, output_path)
+    except Exception as e:
+        raise ValueError(
+            "Could not save as safetensors — this usually means torch-quantized packed "
+            "weights or other non-tensor params. Use format='pt' for a quantized model. "
+            f"[{type(e).__name__}: {e}]") from e
+    return output_path
+
+
 def _select_qengine():
     """Pick and activate a quantized backend for this CPU.
 
@@ -256,11 +273,12 @@ class ModelCompressor:
 
     # -------------------------------------------------------------------- export
     def export(self, output_path, format="onnx"):
-        """Serialize the compressed model. `pt` saves a real torch object;
-        `onnx` exports a real ONNX graph runnable under onnxruntime."""
+        """Serialize the compressed model. `safetensors` saves the weights safely
+        (no pickle — the recommended default for sharing); `pt` saves a full torch
+        object (pickled); `onnx` exports a real ONNX graph runnable under onnxruntime."""
         if not self._is_compressed:
             raise ValueError("Model must be compressed before export")
-        if format not in ("onnx", "pt"):
+        if format not in ("onnx", "pt", "safetensors"):
             raise ValueError(f"Unsupported export format: {format}")
         if os.path.isdir(output_path):
             raise ValueError("Output path cannot be a directory")
@@ -271,6 +289,8 @@ class ModelCompressor:
         if self.kind == "onnx":
             import shutil
             shutil.copy2(self.model, output_path)
+        elif format == "safetensors":
+            save_safetensors(self.model, output_path)
         elif format == "pt":
             torch.save(self.model, output_path)
         else:  # onnx

@@ -112,3 +112,50 @@ def test_diagnose_big_model_on_cpu_flags_slow():
                      is_huggingface=True, cuda_available=False)
     d = diagnose(p, problem="won't-fit", device="laptop-cpu")
     assert any("tok/s" in n for n in d.notes)
+
+
+# ------------------------------------------------------ safetensors (safe) export
+def test_safetensors_export_and_safe_reprofile(tmp_path):
+    cnn = nn.Sequential(nn.Conv2d(3, 8, 3, padding=1), nn.ReLU(),
+                        nn.Flatten(), nn.Linear(8 * 30 * 30, 10))
+    out = tmp_path / "m.safetensors"
+    ModelCompressor(copy.deepcopy(cnn)).prune(0.5, "unstructured").export(str(out), "safetensors")
+    assert out.exists()
+    # re-profiling a safetensors needs NO allow-pickle and executes no code
+    prof = profile_checkpoint(str(out))
+    assert prof.family == "cnn" and prof.detail.get("format") == "safetensors"
+    # the weights load straight back into the architecture
+    from safetensors.torch import load_file
+    cnn.load_state_dict(load_file(str(out)))
+
+
+def test_safetensors_refuses_quantized(tmp_path):
+    m = nn.Sequential(nn.Linear(32, 32), nn.ReLU(), nn.Linear(32, 8))
+    q = ModelCompressor(copy.deepcopy(m)).quantize(approach="dynamic")
+    with pytest.raises(ValueError, match="safetensors|format='pt'"):
+        q.export(str(tmp_path / "q.safetensors"), "safetensors")
+
+
+def test_study_exports_safetensors(tmp_path):
+    import torch as _t
+    from autofollowdown import compress_and_benchmark
+    model = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 4))
+    study = compress_and_benchmark(model, methods=["prune 50%"])
+    out = tmp_path / "v.safetensors"
+    study.export("prune 50%", str(out), format="safetensors")
+    assert out.exists()
+
+
+def test_ingestion_safetensors_is_clear_error(tmp_path):
+    from safetensors.torch import save_model
+    from autofollowdown.ingestion import load_model
+    p = tmp_path / "w.safetensors"
+    save_model(nn.Linear(4, 2), str(p))
+    with pytest.raises(ValueError, match="weights-only|architecture"):
+        load_model(str(p))
+
+
+def test_cli_format_accepts_safetensors():
+    from autofollowdown.cli import build_parser
+    args = build_parser().parse_args(["compress", "m.pt", "--format", "safetensors", "--yes"])
+    assert args.format == "safetensors"

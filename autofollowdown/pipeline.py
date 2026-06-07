@@ -107,10 +107,14 @@ class CompressionStudy:
         return self._bench.to_markdown()
 
     def export(self, name, path, format="pt"):
-        """Save a chosen variant. `pt` saves the torch model; `onnx` exports a
-        graph (float models only — see ModelCompressor.export for the caveat)."""
+        """Save a chosen variant. `safetensors` saves weights safely (no pickle);
+        `pt` saves the full torch model; `onnx` exports a graph (float models only —
+        see ModelCompressor.export for the caveat)."""
         model = self.pick(name)
-        if format == "pt":
+        if format == "safetensors":
+            from .api import save_safetensors
+            save_safetensors(model, path)
+        elif format == "pt":
             torch.save(model, path)
         elif format == "onnx":
             from .onnx_pipeline import export_to_onnx
